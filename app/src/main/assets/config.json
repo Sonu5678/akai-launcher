@@ -1,0 +1,27 @@
+{
+  "name": "",
+  "showGreeting": true,
+  "showDate": true,
+  "clock24h": false,
+
+  "dock": [
+    ["com.google.android.youtube.tv", "youtube"],
+    ["in.startv.hotstar.dplus.tv", "jiohotstar", "hotstar"],
+    ["com.netflix.ninja", "netflix"],
+    ["browsehere", "browse here"]
+  ],
+  "showDockAppsInGrid": false,
+  "pinned": [],
+  "hidden": [],
+  "rename": {},
+
+  "columns": 4,
+  "background": "#000000",
+  "glassColor": "#FFFFFF",
+  "glassOpacity": 0.28,
+  "focusScale": 1.08,
+  "cornerRadius": 22,
+
+  "wallpaper": "wallpaper.jpg",
+  "font": "font.ttf"
+}
