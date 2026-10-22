@@ -36,7 +36,7 @@
             android:resumeWhilePausing="true"
             android:screenOrientation="landscape"
             android:stateNotNeeded="true">
-            <intent-filter>
+            <intent-filter android:priority="3">
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.HOME" />
                 <category android:name="android.intent.category.DEFAULT" />
