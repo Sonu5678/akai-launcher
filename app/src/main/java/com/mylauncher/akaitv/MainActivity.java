@@ -139,7 +139,44 @@ public class MainActivity extends Activity {
             closeDropdown(false);
             if (grid != null) grid.scrollToPosition(0);
             if (!dockViews.isEmpty()) focusDock(0);
+            if (root != null) {
+                root.post(() -> {
+                    if (getCurrentFocus() == null) restoreFocus();
+                });
+            }
         }
+    }
+
+    /** After boot or Home the window can come up with nothing focused; grab focus as soon as we can. */
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus && root != null) {
+            root.post(() -> {
+                if (getCurrentFocus() == null) restoreFocus();
+            });
+        }
+    }
+
+    /** Safety net: if a remote button arrives while nothing is focused, focus first and swallow it. */
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent e) {
+        if (e.getAction() == KeyEvent.ACTION_DOWN && getCurrentFocus() == null) {
+            switch (e.getKeyCode()) {
+                case KeyEvent.KEYCODE_DPAD_UP:
+                case KeyEvent.KEYCODE_DPAD_DOWN:
+                case KeyEvent.KEYCODE_DPAD_LEFT:
+                case KeyEvent.KEYCODE_DPAD_RIGHT:
+                case KeyEvent.KEYCODE_DPAD_CENTER:
+                case KeyEvent.KEYCODE_ENTER:
+                    restoreFocus();
+                    if (getCurrentFocus() != null) return true;
+                    break;
+                default:
+                    break;
+            }
+        }
+        return super.dispatchKeyEvent(e);
     }
 
     @Override
@@ -339,6 +376,7 @@ public class MainActivity extends Activity {
             p.setPadding(ph, 0, ph, 0);
             p.setBackground(rr(0x33FFFFFF, pillH / 2f));
             p.setFocusable(true);
+            p.setFocusableInTouchMode(true);
             p.setClickable(true);
             p.setId(View.generateViewId());
             final int idx = i;
@@ -374,6 +412,7 @@ public class MainActivity extends Activity {
             bindCard(card, a);
             card.setId(View.generateViewId());
             card.setFocusable(true);
+            card.setFocusableInTouchMode(true);
             card.setClickable(true);
             Drawable art = a.banner(pm);
             if (art == null) art = a.icon(pm);
@@ -624,6 +663,7 @@ public class MainActivity extends Activity {
             cell.setLayoutParams(new RecyclerView.LayoutParams(-1, cellH));
             cell.setClipChildren(false);
             cell.setFocusable(true);
+            cell.setFocusableInTouchMode(true);
             cell.setClickable(true);
 
             FrameLayout card = makeCard();
@@ -898,6 +938,7 @@ public class MainActivity extends Activity {
             t.setPadding(ph, pv, ph, pv);
             t.setSingleLine(true);
             t.setFocusable(true);
+            t.setFocusableInTouchMode(true);
             t.setClickable(true);
             t.setTag(Float.valueOf(18 * s));
             t.setOnFocusChangeListener((v, has) -> {
