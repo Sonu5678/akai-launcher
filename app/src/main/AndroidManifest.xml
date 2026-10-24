@@ -4,11 +4,12 @@
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-    <!-- Only needed so Android lets us read the Wi-Fi network name -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- Only used to fetch poster pictures for "My Shows" from the URLs your streaming apps publish.
+         Set "watchNext": false in config.json and the launcher never touches the network. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Lets the launcher read the "continue watching" list. Android only grants it if the TV allows it. -->
+    <uses-permission android:name="android.permission.READ_TV_LISTINGS" />
 
     <queries>
         <intent>
@@ -19,6 +20,7 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <provider android:authorities="android.media.tv" />
     </queries>
 
     <application
@@ -36,7 +38,7 @@
             android:resumeWhilePausing="true"
             android:screenOrientation="landscape"
             android:stateNotNeeded="true">
-            <intent-filter android:priority="3">
+            <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.HOME" />
                 <category android:name="android.intent.category.DEFAULT" />

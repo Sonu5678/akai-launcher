@@ -24,6 +24,7 @@ final class GlassView extends View {
     private boolean has;
     private ValueAnimator anim;
     private final int topColor, bottomColor, edgeColor;
+    private float shaderTop = Float.NaN, shaderBottom = Float.NaN;
 
     GlassView(Context c, int rgb, float opacity, float strokePx) {
         super(c);
@@ -77,8 +78,14 @@ final class GlassView extends View {
     @Override
     protected void onDraw(Canvas c) {
         if (!has) return;
-        fill.setShader(new LinearGradient(0, cur.top, 0, cur.bottom, topColor, bottomColor,
-                Shader.TileMode.CLAMP));
+        // rebuild the gradient only when the highlight has actually moved vertically
+        if (Float.isNaN(shaderTop) || Math.abs(shaderTop - cur.top) > 0.5f
+                || Math.abs(shaderBottom - cur.bottom) > 0.5f) {
+            fill.setShader(new LinearGradient(0, cur.top, 0, cur.bottom, topColor, bottomColor,
+                    Shader.TileMode.CLAMP));
+            shaderTop = cur.top;
+            shaderBottom = cur.bottom;
+        }
         float r = Math.max(0f, curR);
         c.drawRoundRect(cur, r, r, fill);
         c.drawRoundRect(cur, r, r, stroke);

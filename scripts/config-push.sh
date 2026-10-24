@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Sends your settings (and optional wallpaper / font) to the launcher. No rebuild needed.
-#   bash scripts/config-push.sh <tv-ip>[:port] app/src/main/assets/config.json [wallpaper.jpg] [font.ttf]
-# The file name decides what it is: config.json, wallpaper.jpg, font.ttf.
+# Sends your settings, wallpaper, font or show posters to the launcher. No rebuild needed.
+#   bash scripts/config-push.sh <tv-ip>[:port] <file> [more files]
+# The file name decides what it is: config.json, wallpaper.jpg, font.ttf, or any poster image.
 PKG=com.mylauncher.akaitv
 TV="$1"; shift
 if [ -z "$TV" ] || [ $# -eq 0 ]; then
@@ -11,23 +11,28 @@ case "$TV" in *:*) ADDR="$TV" ;; *) ADDR="$TV:5555" ;; esac
 a() { adb -s "$ADDR" "$@"; }
 adb connect "$ADDR" >/dev/null 2>&1 || true
 
-DEST_EXT="/sdcard/Android/data/$PKG/files"
+EXT="/sdcard/Android/data/$PKG/files"
+FAIL=0
 for SRC in "$@"; do
+  if [ ! -f "$SRC" ]; then echo "No such file: $SRC"; FAIL=1; continue; fi
   NAME="$(basename "$SRC")"
-  case "$SRC" in
-    *config.json) NAME="config.json" ;;
-  esac
-  if a push "$SRC" "$DEST_EXT/$NAME" >/dev/null 2>&1; then
-    echo "pushed $NAME"
-  else
-    # fallback: write into the app's private folder (the debug build allows run-as)
-    if a shell "run-as $PKG sh -c 'mkdir -p files && cat > files/$NAME'" < "$SRC"; then
-      echo "pushed $NAME (private folder)"
-    else
-      echo "FAILED to push $NAME"
+  case "$SRC" in *config.json) NAME="config.json" ;; esac
+  WANT="$(wc -c < "$SRC" | tr -d ' ')"
+  OK=0
+  if a push "$SRC" "$EXT/$NAME" >/dev/null 2>&1; then
+    GOT="$(a shell stat -c%s "$EXT/$NAME" 2>/dev/null | tr -d '\r')"
+    if [ "$GOT" = "$WANT" ]; then echo "pushed $NAME"; OK=1; fi
+  fi
+  if [ $OK -eq 0 ]; then
+    # fallback: the app's private folder (works because this build is debuggable)
+    if a exec-in "run-as $PKG sh -c 'mkdir -p files && cat > files/$NAME'" < "$SRC" 2>/dev/null; then
+      GOT="$(a shell "run-as $PKG stat -c%s files/$NAME" 2>/dev/null | tr -d '\r')"
+      if [ "$GOT" = "$WANT" ]; then echo "pushed $NAME (private folder)"; OK=1; fi
     fi
   fi
+  if [ $OK -eq 0 ]; then echo "FAILED to push $NAME (size check did not match)"; FAIL=1; fi
 done
 
-# bring the launcher back so it reloads right away
-a shell input keyevent KEYCODE_HOME >/dev/null 2>&1 || true
+# bring the launcher to the front so it reloads right away
+a shell am start -n $PKG/.MainActivity >/dev/null 2>&1 || true
+exit $FAIL

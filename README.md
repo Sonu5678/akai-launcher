@@ -1,86 +1,104 @@
-# Akai TV launcher (Apple TV style)
+# Akai TV launcher v2
 
-Black home screen, a dock with your four apps, a 4-column grid that slides up on Down,
-one glass highlight that springs between items, big thin clock, Inputs / Wi-Fi / Settings pills.
-Built for the Akai AG43Q (Android 14). Nothing is rooted, nothing is deleted.
+Black home screen with a big thin clock, a funny tagline that changes with the tile you focus, a
+dock (Netflix, BrowseHere, JioHotstar, Inputs), and rows that slide up when you press Down:
+**My Shows**, **Other Apps** (with **More apps**) and **Play** (a small game).
+Everything is drawn in code. Nothing is rooted and nothing is deleted.
 
-## Phone-only setup (Termux)
+Everything below runs in Termux on your phone. No PC.
 
-1. **Termux**: install from F-Droid (the Play Store one is outdated), then
-   `pkg install -y unzip` and `termux-setup-storage`.
-2. Unzip this project: `cp ~/storage/downloads/akai-launcher.zip ~ && unzip akai-launcher.zip && cd akai-launcher`
-3. **Build it on GitHub**: `bash scripts/publish.sh`
-   (logs you in, makes a public repo, waits ~3 min for the APK build)
-4. **TV**: Settings → Device Preferences → About → press OK on *Build* 7 times, then
-   Developer options → turn on USB debugging (and Network/ADB or Wireless debugging).
-   Note the TV's IP (Settings → Network).
-5. **Install**: `bash scripts/install.sh <github-user>/<repo> <tv-ip>` and press **Allow** on the TV.
+## Update to this version (one command)
 
-If the TV only offers *Wireless debugging*: run `adb pair <ip>:<pairing-port>`, enter the code,
-then use the ip:port from that screen in step 5.
+1. Download `akai-launcher-v2.zip` from the chat (it lands in your Downloads).
+2. In Termux:
+   ```
+   cd ~/akai-launcher
+   bash scripts/update.sh 192.168.29.42:5555
+   ```
+   It applies the zip, pushes to GitHub, waits for the build, and installs on the TV.
+   If the build fails, nothing is installed, your TV stays as it is, and the script prints the
+   error to paste to Claude.
+3. Open Akai with your shortcut button. If Home already points at Akai it opens by itself.
 
-When you're done, turn USB / Network debugging **off** on the TV.
-
-## Customising (no rebuild)
-
-Everything lives in `app/src/main/assets/config.json`. Edit it (`nano`), then push it:
+## Make the Home button open Akai (safe, reversible)
 
 ```
-bash scripts/config-push.sh <tv-ip> app/src/main/assets/config.json
+bash scripts/make-default.sh 192.168.29.42:5555
 ```
+It first checks that switching off the setup wizard won't delete a saved Wi-Fi network. It
+remembers your original home, switches things off, pins Akai, and checks the result. If anything
+looks wrong it rolls itself back.
 
-The launcher reloads when you come back to it. What you can change:
+## Put everything back exactly as it was
+
+```
+bash scripts/restore-original.sh 192.168.29.42:5555
+```
+Re-enables everything that was switched off and points Home back at the original Google TV home.
+Add `--remove` to uninstall Akai completely, or `--dns-off` to set Private DNS back to automatic.
+
+## Change things without rebuilding
+
+Edit `app/src/main/assets/config.json` (`nano` works in Termux), then:
+```
+bash scripts/config-push.sh 192.168.29.42:5555 app/src/main/assets/config.json
+```
+It reloads when you return to Home. Check the file with a JSON checker first if you can: if it
+is broken the launcher shows an error and uses its built-in defaults, it never crashes.
 
 | Key | What it does |
 |---|---|
-| `dock` | The dock apps, in order. Each entry is a list of things to match, tried left to right: an exact package name, an app name, or any part of either. `["com.netflix.ninja","netflix"]` |
-| `pinned` | Apps shown first in the grid |
-| `hidden` | Apps to hide from the grid (same matching as `dock`) |
-| `rename` | `{"hotstar": "Hotstar"}` shows a different name |
-| `showDockAppsInGrid` | Also list dock apps in the grid |
-| `columns` | 3 to 6 |
+| `dock` | The four tiles. Each is `{"match": ["name or package"], "taglines": ["...","..."]}` or `{"type": "inputs"}` |
+| `myShows` | The My Shows row. `watchNext: true` shows what you are watching (see below). `items` are shows you pick by hand |
+| `otherApps` | Apps in the second row. Each entry is a list of names/packages tried in order |
+| `play` | `enabled: false` removes the game row |
+| `hidden` | Apps hidden from All apps (exact name or package) |
+| `rename` | `{"jiotv": "JioTV+"}` shows a different name |
+| `columns` | Columns in All apps (3 to 7) |
 | `name`, `showGreeting`, `showDate`, `clock24h` | Top-left block |
-| `background`, `glassColor`, `glassOpacity`, `focusScale`, `cornerRadius` | Look |
+| `glassColor`, `glassOpacity`, `focusScale`, `cornerRadius` | Look |
 
-**Wallpaper**: `bash scripts/config-push.sh <tv-ip> /path/to/wallpaper.jpg`
-**Font**: push a `font.ttf` the same way (Outfit from fonts.google.com looks right).
+**Wallpaper**: `bash scripts/config-push.sh <tv> /path/to/wallpaper.jpg` (1920x1080 works best).
+**Font**: push a `font.ttf` the same way.
+**Find a package name**: long-press OK on any app in All apps.
 
-**Finding a package name**: on the TV, long-press OK on any grid app. It shows the package name
-and opens App info (where you can also uninstall or disable it).
-
-Want to change layouts or animations? Edit `MainActivity.java`, push to GitHub, and the
-build runs again. Installs update in place because the signing key is fixed.
-
-## Switching off ads / junk apps
-
+### Picking shows by hand
 ```
-bash scripts/disable-app.sh <tv-ip> <package> [package ...]
+"myShows": { "items": [
+  { "title": "Show name", "app": "netflix", "uri": "https://www.netflix.com/title/12345678",
+    "poster": "show1.jpg" }
+] }
 ```
+Save the poster in your Downloads, push it with `config-push.sh`, and use its file name. If
+`uri` is missing or fails, OK just opens the app.
 
-Switches apps off (never uninstalls) and records them. Undo everything with
-`bash scripts/restore.sh <tv-ip>`. The install script already saved your full package list
-to `~/tv-backup/packages.txt`; send it to Claude and ask which ones are safe to disable.
+## About My Shows ("what I'm watching")
 
-Optional ad-blocking DNS (doesn't block YouTube ads):
-```
-adb shell settings put global private_dns_specifier dns.adguard-dns.com
-adb shell settings put global private_dns_mode hostname
-```
-Undo: `adb shell settings put global private_dns_mode opportunistic`
+Streaming apps can publish a "continue watching" list to Android TV. Akai reads it if your TV
+allows it. Whether it works depends on this TV and on each app, and I could not test it from
+here, so:
+* if the TV allows it and an app publishes to it, those shows appear first (newest first);
+* otherwise the row shows the shows you picked by hand;
+* if neither, it shows a "Nothing here yet" card.
+
+Only this feature can use the internet, and only to fetch poster pictures from addresses your
+own apps provide. Set `"watchNext": false` and Akai never touches the network.
+
+## Safety notes
+
+* **Safe mode.** If the launcher stops working twice within two minutes it opens a plain screen
+  with Settings, Wi-Fi and "Try normal mode" so you can never be locked out.
+* **Nothing is uninstalled.** Apps are only switched off, and every switch-off is recorded.
+* **Links are locked to their app.** A show link can only be opened by the app it came from.
+* **Keep debugging off** on the TV when you are not changing things. That, not the code, is
+  what stops other devices on your Wi-Fi from controlling the TV.
+* The build is signed with a standard debug key. Keep your GitHub repo private.
 
 ## Troubleshooting
 
-- **Install says INSTALL_FAILED_VERIFICATION_FAILURE** or refuses a HOME app: the TV blocks
-  sideloaded launchers. Everything else (debloat, DNS) still works.
-- **Another home screen keeps appearing**: list who claims HOME with
-  `adb shell cmd package query-activities -a android.intent.action.MAIN -c android.intent.category.HOME`,
-  then `adb shell cmd package set-home-activity com.mylauncher.akaitv/.MainActivity`.
-  Only after the new home works, switch the stock one off with `disable-app.sh`.
-  On Google TV, don't disable `com.google.android.tungsten.setupwraith` until you've checked
-  `adb shell dumpsys wifi | grep -o 'cname=[^ ]*'` — disabling it can delete a Wi-Fi network saved
-  during setup and drop the TV off Wi-Fi.
-- **Wi-Fi pill just says "Wi-Fi"**: the location permission wasn't granted:
-  `adb shell pm grant com.mylauncher.akaitv android.permission.ACCESS_FINE_LOCATION`
-- **Home button goes somewhere odd**: `bash scripts/restore.sh <tv-ip> --remove`
-- **Inputs doesn't switch**: some TVs only accept their own input picker; the pill then shows a message.
-- **Build failed on GitHub**: `gh run view --log-failed` in Termux, and paste the output to Claude.
+* **Build failed**: the update script prints the log. Paste it to Claude.
+* **Home goes to a strange screen**: `bash scripts/restore-original.sh <tv>`.
+* **Inputs doesn't switch**: tell Claude the TV model and what happens; some TVs only accept
+  their own input picker.
+* **An app is missing from a row**: use its package name (long-press in All apps) in
+  `config.json`.

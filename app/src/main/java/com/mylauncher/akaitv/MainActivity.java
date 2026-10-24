@@ -21,12 +21,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.media.tv.TvContract;
 import android.media.tv.TvInputInfo;
 import android.media.tv.TvInputManager;
-import android.net.ConnectivityManager;
-import android.net.Network;
-import android.net.NetworkCapabilities;
 import android.net.Uri;
-import android.net.wifi.WifiInfo;
-import android.net.wifi.WifiManager;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.util.DisplayMetrics;
@@ -46,11 +41,11 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.recyclerview.widget.GridLayoutManager;
+import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.Calendar;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -58,44 +53,95 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
- * Apple TV style home screen: top bar (greeting, clock, pills), a dock of
- * four apps, and a 4-column grid that slides up when you press Down.
- * Everything is built in code so there are no layout files to maintain.
+ * The home screen: clock, a tagline, a dock of four tiles, and rows that slide up when you
+ * press Down (My Shows, Other Apps, Play). Everything is built in code, so there are no layout
+ * files. Inputs, All apps and the game open as full-screen layers on top.
  */
 public class MainActivity extends Activity {
-    private static final int Z_TOP = 0, Z_DOCK = 1, Z_GRID = 2;
+    private static final int OWN_DOCK = 0, OWN_ROW = 1, OWN_GRID = 2, OWN_INPUTS = 3;
+    private static final int ZONE_ICONS = -2, ZONE_DOCK = -1;
+    private static boolean guardInstalled;
+
+    // ------------------------------------------------------------------ data
+
+    static final class Item {
+        static final int APP = 0, SHOW = 1, MORE = 2, PLAY = 3, INPUT = 4, INPUTS_TILE = 5;
+        final int kind;
+        AppEntry app;
+        String title = "", sub = "", source = "", uri = "", pkg = "", posterRef = "";
+        Bitmap poster;
+        String inputId = "";
+        boolean passthrough, connected, placeholder;
+        int artKind = ArtView.OTHER;
+        int glow = 0xFF3A3A3C;
+
+        Item(int kind) {
+            this.kind = kind;
+        }
+    }
+
+    private static final class Row {
+        String title = "";
+        int top, cardW, cardH, cellH;
+        boolean labelBelow;
+        final List<Item> items = new ArrayList<>();
+        RecyclerView rv;
+        MainActivity.CardAdapter adapter;
+    }
+
+    private interface PosSource {
+        int pos();
+
+        Item item();
+    }
+
+    // ------------------------------------------------------------------ state
 
     private SharedPreferences prefs;
     private PackageManager pm;
+    private ExecutorService io;
     private Config cfg;
     private long cfgStamp;
     private String sig = "";
+    private int gen;
+    private boolean safe;
 
-    private FrameLayout root, page, topLayer;
-    private GlassView glass;
-    private RecyclerView grid;
-    private LinearLayout dropdown;
-    private final List<TextView> dropdownItems = new ArrayList<>();
-    private TextView dockName, greetingView, wifiPill;
+    private FrameLayout root, page;
+    private GlassView pageGlass;
+    private TextView taglineView;
     private View glow;
     private GradientDrawable glowDrawable;
-    private int glowColor = 0;
-    private int glowSize;
+    private int glowColor, glowSize;
     private ValueAnimator glowAnim;
 
-    private final List<AppEntry> dockApps = new ArrayList<>();
-    private final List<AppEntry> gridApps = new ArrayList<>();
-    private final List<View> dockViews = new ArrayList<>();
-    private final List<TextView> pills = new ArrayList<>();
-    private int[] dockColors = new int[0];
+    private final List<AppEntry> rawApps = new ArrayList<>();
+    private final List<Item> dockItems = new ArrayList<>();
+    private final List<Config.DockSpec> dockSpecs = new ArrayList<>();
+    private final List<CardView> dockViews = new ArrayList<>();
+    private final List<View> iconViews = new ArrayList<>();
+    private final List<Row> rows = new ArrayList<>();
+    private Row showsRow;
+    private int[] tagIdx = new int[0];
 
-    private Typeface tfThin, tfLight;
-    private int W, H, M, G, tileW, tileH, cellH, labelH, pad, dockY, bandH, gridTop, shift;
-    private float s;
-    private int zone = -1;
+    private Typeface tfThin, tfLight, tfRegular;
+    private int W, H, M, G, tileW, tileH, labelH, labelGap, dockCellH, pad, dockY, bandH;
+    private int rowFocusY, rowTitleH, rowVpad, rowGapTitle, pageH;
+    private float s = 1f;
+    private int zone = Integer.MIN_VALUE;
+    private int fOwner = OWN_DOCK, fIdx = 0, fPos = 0;
     private int lastDock = 0;
+
+    private FrameLayout inputsLayer, appsLayer;
+    private GlassView inputsGlass, appsGlass;
+    private RecyclerView inputsRv, appsRv;
+    private final List<Item> inputItems = new ArrayList<>();
+    private final List<Item> appsItems = new ArrayList<>();
+    private int appsCols = 5;
+    private GameView gameView;
 
     // ------------------------------------------------------------------ lifecycle
 
@@ -104,17 +150,28 @@ public class MainActivity extends Activity {
         super.onCreate(b);
         prefs = getSharedPreferences("launcher", MODE_PRIVATE);
         pm = getPackageManager();
+        io = Executors.newFixedThreadPool(2);
+        installCrashGuard();
+        safe = recentCrashes().size() >= 2;
         getWindow().setBackgroundDrawable(new ColorDrawable(Color.BLACK));
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);
         root = new FrameLayout(this);
         root.setClipChildren(false);
         setContentView(root);
-        build();
+        startUi();
+    }
+
+    @Override
+    protected void onDestroy() {
+        gen++;
+        if (io != null) io.shutdownNow();
+        super.onDestroy();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        if (safe) return;
         boolean rebuild = false;
         try {
             if (cfg == null || cfg.stamp() != cfgStamp) rebuild = true;
@@ -122,46 +179,42 @@ public class MainActivity extends Activity {
         } catch (Throwable t) {
             rebuild = false;
         }
-        if (rebuild) {
-            build();
-        } else {
-            if (greetingView != null) greetingView.setText(greeting());
-            if (wifiPill != null) wifiPill.setText(wifiLabel());
-            if (getCurrentFocus() == null) restoreFocus();
+        if (rebuild && gameView == null && inputsLayer == null && appsLayer == null) {
+            startUi();
+        } else if (getCurrentFocus() == null && root != null) {
+            root.post(this::ensureFocus);
         }
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
-        // Home pressed while we are already showing: go back to the top.
+        if (safe) return;
         if (intent != null && intent.hasCategory(Intent.CATEGORY_HOME)) {
-            closeDropdown(false);
-            if (grid != null) grid.scrollToPosition(0);
-            if (!dockViews.isEmpty()) focusDock(0);
-            if (root != null) {
-                root.post(() -> {
-                    if (getCurrentFocus() == null) restoreFocus();
-                });
-            }
+            closeGame(false);
+            closeOverlays(false);
+            fOwner = OWN_DOCK;
+            fIdx = 0;
+            fPos = 0;
+            if (root != null) root.post(this::refocusPage);
         }
     }
 
-    /** After boot or Home the window can come up with nothing focused; grab focus as soon as we can. */
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (hasFocus && root != null) {
+        if (hasFocus && root != null && !safe) {
             root.post(() -> {
-                if (getCurrentFocus() == null) restoreFocus();
+                if (getCurrentFocus() == null) ensureFocus();
             });
         }
     }
 
-    /** Safety net: if a remote button arrives while nothing is focused, focus first and swallow it. */
+    /** If a remote button arrives while nothing is focused, focus first and swallow the press. */
     @Override
     public boolean dispatchKeyEvent(KeyEvent e) {
-        if (e.getAction() == KeyEvent.ACTION_DOWN && getCurrentFocus() == null) {
+        if (!safe && gameView == null && e.getAction() == KeyEvent.ACTION_DOWN
+                && getCurrentFocus() == null) {
             switch (e.getKeyCode()) {
                 case KeyEvent.KEYCODE_DPAD_UP:
                 case KeyEvent.KEYCODE_DPAD_DOWN:
@@ -169,7 +222,7 @@ public class MainActivity extends Activity {
                 case KeyEvent.KEYCODE_DPAD_RIGHT:
                 case KeyEvent.KEYCODE_DPAD_CENTER:
                 case KeyEvent.KEYCODE_ENTER:
-                    restoreFocus();
+                    ensureFocus();
                     if (getCurrentFocus() != null) return true;
                     break;
                 default:
@@ -181,27 +234,138 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (dropdown != null && dropdown.getVisibility() == View.VISIBLE) {
-            closeDropdown(true);
-        } else if (zone == Z_GRID) {
-            focusDock(lastDock);
-        } else if (zone == Z_TOP && !dockViews.isEmpty()) {
+        if (gameView != null) {
+            closeGame(true);
+        } else if (inputsLayer != null || appsLayer != null) {
+            closeOverlays(true);
+        } else if (!safe && zone != ZONE_DOCK && !dockViews.isEmpty()) {
             focusDock(lastDock);
         }
         // never call super: a launcher has nowhere to go back to
     }
 
+    // ------------------------------------------------------------------ crash guard
+
+    private void installCrashGuard() {
+        if (guardInstalled) return;
+        guardInstalled = true;
+        final Thread.UncaughtExceptionHandler old = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
+            try {
+                recordCrash();
+            } catch (Throwable ignored) {
+                // never let the guard itself fail
+            }
+            if (old != null) old.uncaughtException(t, e);
+        });
+    }
+
+    private List<Long> recentCrashes() {
+        List<Long> out = new ArrayList<>();
+        long now = System.currentTimeMillis();
+        String raw = prefs.getString("crashes", "");
+        for (String part : raw.split(",")) {
+            if (part.isEmpty()) continue;
+            try {
+                long v = Long.parseLong(part);
+                if (now - v < 120000L && v <= now + 1000L) out.add(v);
+            } catch (NumberFormatException ignored) {
+                // skip junk
+            }
+        }
+        return out;
+    }
+
+    private void recordCrash() {
+        StringBuilder sb = new StringBuilder();
+        for (long v : recentCrashes()) sb.append(v).append(',');
+        sb.append(System.currentTimeMillis()).append(',');
+        prefs.edit().putString("crashes", sb.toString()).commit();
+    }
+
+    private void startUi() {
+        try {
+            if (safe) buildSafe();
+            else build();
+        } catch (Throwable t) {
+            recordCrash();
+            try {
+                safe = true;
+                buildSafe();
+            } catch (Throwable ignored) {
+                // nothing more we can do
+            }
+        }
+    }
+
+    /** A minimal screen that always works: lets you reach Settings and retry. */
+    private void buildSafe() {
+        gen++;
+        metrics();
+        tfThin = Typeface.create("sans-serif-thin", Typeface.NORMAL);
+        tfLight = Typeface.create("sans-serif-light", Typeface.NORMAL);
+        tfRegular = Typeface.create("sans-serif", Typeface.NORMAL);
+        root.removeAllViews();
+        root.setBackgroundColor(Color.BLACK);
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setGravity(Gravity.CENTER_HORIZONTAL);
+        TextView t1 = text("Safe mode", 72 * s, 0xFFFFFFFF, tfThin);
+        col.addView(t1);
+        TextView t2 = text("The launcher stopped working twice in a row. Your settings are untouched.",
+                28 * s, 0xB3FFFFFF, tfLight);
+        t2.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams l2 = new LinearLayout.LayoutParams(-2, -2);
+        l2.topMargin = Math.round(14 * s);
+        l2.bottomMargin = Math.round(40 * s);
+        col.addView(t2, l2);
+        final List<TextView> buttons = new ArrayList<>();
+        String[] names = {"Settings", "Wi-Fi", "Try normal mode"};
+        for (int i = 0; i < names.length; i++) {
+            final int idx = i;
+            final TextView b = text(names[i], 30 * s, 0xFFFFFFFF, tfLight);
+            b.setGravity(Gravity.CENTER);
+            int ph = Math.round(48 * s), pv = Math.round(18 * s);
+            b.setPadding(ph, pv, ph, pv);
+            b.setBackground(rr(0x22FFFFFF, 40 * s));
+            b.setFocusable(true);
+            b.setFocusableInTouchMode(true);
+            b.setClickable(true);
+            b.setOnFocusChangeListener((v, has) -> b.setBackground(rr(has ? 0x66FFFFFF : 0x22FFFFFF, 40 * s)));
+            b.setOnClickListener(v -> {
+                if (idx == 0) openSettingsScreen(Settings.ACTION_SETTINGS);
+                else if (idx == 1) openSettingsScreen(Settings.ACTION_WIFI_SETTINGS);
+                else {
+                    prefs.edit().putString("crashes", "").commit();
+                    safe = false;
+                    startUi();
+                }
+            });
+            b.setOnKeyListener((v, key, e) -> {
+                if (e.getAction() != KeyEvent.ACTION_DOWN) return false;
+                if (key == KeyEvent.KEYCODE_DPAD_DOWN) {
+                    if (idx < buttons.size() - 1) buttons.get(idx + 1).requestFocus();
+                    return true;
+                }
+                if (key == KeyEvent.KEYCODE_DPAD_UP) {
+                    if (idx > 0) buttons.get(idx - 1).requestFocus();
+                    return true;
+                }
+                return key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT;
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(Math.round(520 * s), -2);
+            lp.topMargin = Math.round(16 * s);
+            col.addView(b, lp);
+            buttons.add(b);
+        }
+        root.addView(col, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
+        col.setGravity(Gravity.CENTER);
+        root.post(() -> buttons.get(0).requestFocus());
+    }
+
     // ------------------------------------------------------------------ build
 
-    private void build() {
-        cfg = Config.load(this);
-        cfgStamp = cfg.stamp();
-        if (cfg.error != null) Toast.makeText(this, cfg.error, Toast.LENGTH_LONG).show();
-
-        List<AppEntry> raw = queryApps();
-        sig = signature(raw);
-        partition(raw);
-
+    private void metrics() {
         DisplayMetrics dm = new DisplayMetrics();
         getWindowManager().getDefaultDisplay().getRealMetrics(dm);
         W = dm.widthPixels;
@@ -209,90 +373,242 @@ public class MainActivity extends Activity {
         s = H / 1080f;
         M = Math.round(W * 0.075f);
         G = Math.round(W * 0.012f);
-        int cols = cfg.columns;
-        tileW = (W - 2 * M - (cols - 1) * G) / cols;
+        tileW = Math.round(W * 0.2f);
         tileH = tileW * 9 / 16;
-        labelH = Math.round(46 * s);
-        cellH = tileH + labelH + Math.round(26 * s);
-        pad = Math.round(28 * s);
-        bandH = tileH + 2 * pad;
-        dockY = Math.round(H * 0.665f);
-        gridTop = dockY + bandH + Math.round(60 * s);
-        int topPad = Math.round(56 * s);
-        shift = gridTop - topPad;
-        int gridH = H - topPad;
+        labelH = Math.round(40 * s);
+        labelGap = Math.round(10 * s);
+        dockCellH = tileH + labelGap + labelH;
+        pad = Math.round(24 * s);
+        bandH = dockCellH + 2 * pad;
+        dockY = Math.round(H * 0.575f);
+        rowFocusY = Math.round(150 * s);
+        rowTitleH = Math.round(44 * s);
+        rowVpad = Math.round(22 * s);
+        rowGapTitle = Math.round(6 * s);
+    }
 
+    private void fonts() {
         tfThin = Typeface.create("sans-serif-thin", Typeface.NORMAL);
         tfLight = Typeface.create("sans-serif-light", Typeface.NORMAL);
+        tfRegular = Typeface.create("sans-serif", Typeface.NORMAL);
         File ff = cfg.find(cfg.font);
         if (ff != null) {
             try {
                 Typeface t = Typeface.createFromFile(ff);
                 tfThin = t;
                 tfLight = t;
+                tfRegular = t;
             } catch (Throwable ignored) {
                 // keep system fonts
             }
         }
+    }
+
+    private void build() {
+        gen++;
+        final int myGen = gen;
+        cfg = Config.load(this);
+        cfgStamp = cfg.stamp();
+        if (cfg.error != null) Toast.makeText(this, cfg.error, Toast.LENGTH_LONG).show();
+
+        rawApps.clear();
+        rawApps.addAll(queryApps());
+        sig = signature(rawApps);
+        applyRenames();
+        metrics();
+        fonts();
 
         root.removeAllViews();
-        zone = -1;
+        gameView = null;
+        inputsLayer = null;
+        inputsRv = null;
+        inputsGlass = null;
+        appsLayer = null;
+        appsRv = null;
+        appsGlass = null;
         dockViews.clear();
-        pills.clear();
-        dropdownItems.clear();
+        iconViews.clear();
+        rows.clear();
+        dockItems.clear();
+        dockSpecs.clear();
+        showsRow = null;
+        zone = Integer.MIN_VALUE;
         root.setBackgroundColor(cfg.background);
 
         addWallpaper();
+        buildDockItems();
+        prepareRows();
 
         page = new FrameLayout(this);
         page.setClipChildren(false);
-        root.addView(page, new FrameLayout.LayoutParams(W, gridTop + gridH));
+        root.addView(page, new FrameLayout.LayoutParams(W, pageH));
 
-        topLayer = new FrameLayout(this);
-        topLayer.setClipChildren(false);
-        page.addView(topLayer, new FrameLayout.LayoutParams(W, H));
-
-        buildGlowAndName();
-        buildDockBand();
+        buildAmbient();
         buildHeader();
-        buildPills();
-        buildDockTiles();
-        buildGrid(gridH);
-        buildDropdown();
+        buildIcons();
+        buildTagline();
+        buildDock();
+        buildRowViews();
 
-        glass = new GlassView(this, cfg.glassColor, cfg.glassOpacity, Math.max(1.5f, 2f * s));
-        page.addView(glass, new FrameLayout.LayoutParams(W, gridTop + gridH));
+        pageGlass = new GlassView(this, cfg.glassColor, cfg.glassOpacity, Math.max(1.5f, 2f * s));
+        page.addView(pageGlass, new FrameLayout.LayoutParams(W, pageH));
 
-        wireNavigation();
+        wireIcons();
         root.post(this::restoreFocus);
+        loadShows(myGen);
     }
 
     private void addWallpaper() {
         File wf = cfg.find(cfg.wallpaper);
-        if (wf == null) return;
-        try {
-            BitmapFactory.Options o = new BitmapFactory.Options();
-            o.inJustDecodeBounds = true;
-            BitmapFactory.decodeFile(wf.getPath(), o);
-            int sample = 1;
-            while (o.outWidth / (sample * 2) >= W && o.outHeight / (sample * 2) >= H) sample *= 2;
-            o.inJustDecodeBounds = false;
-            o.inSampleSize = sample;
-            Bitmap bmp = BitmapFactory.decodeFile(wf.getPath(), o);
-            if (bmp == null) return;
-            ImageView iv = new ImageView(this);
-            iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            iv.setImageBitmap(bmp);
-            root.addView(iv, new FrameLayout.LayoutParams(-1, -1));
-            View scrim = new View(this);
-            scrim.setBackgroundColor(0x66000000);
-            root.addView(scrim, new FrameLayout.LayoutParams(-1, -1));
-        } catch (Throwable ignored) {
-            // no wallpaper then
+        if (wf != null) {
+            try {
+                BitmapFactory.Options o = new BitmapFactory.Options();
+                o.inJustDecodeBounds = true;
+                BitmapFactory.decodeFile(wf.getPath(), o);
+                int sample = 1;
+                while (o.outWidth / (sample * 2) >= W && o.outHeight / (sample * 2) >= H) sample *= 2;
+                o.inJustDecodeBounds = false;
+                o.inSampleSize = sample;
+                Bitmap bmp = BitmapFactory.decodeFile(wf.getPath(), o);
+                if (bmp != null) {
+                    ImageView iv = new ImageView(this);
+                    iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                    iv.setImageBitmap(bmp);
+                    root.addView(iv, new FrameLayout.LayoutParams(-1, -1));
+                    View scrim = new View(this);
+                    scrim.setBackgroundColor(0x66000000);
+                    root.addView(scrim, new FrameLayout.LayoutParams(-1, -1));
+                    return;
+                }
+            } catch (Throwable ignored) {
+                // fall through to the built-in backdrop
+            }
+        }
+        if (cfg.background == 0xFF000000) {
+            View amb = new View(this);
+            amb.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                    new int[]{0xFF05070d, 0xFF0b1122, 0xFF04060b}));
+            root.addView(amb, new FrameLayout.LayoutParams(-1, -1));
         }
     }
 
-    private void buildGlowAndName() {
+    private void buildDockItems() {
+        for (Config.DockSpec ds : cfg.dock) {
+            if (dockItems.size() >= 5) break;
+            if (ds.type.equals("inputs")) {
+                Item it = new Item(Item.INPUTS_TILE);
+                it.title = ds.label.isEmpty() ? "Inputs" : ds.label;
+                it.glow = 0xFF5B7CFA;
+                dockItems.add(it);
+                dockSpecs.add(ds);
+            } else {
+                AppEntry a = null;
+                for (String m : ds.match) {
+                    a = find(rawApps, m);
+                    if (a != null) break;
+                }
+                if (a == null) continue;
+                Item it = new Item(Item.APP);
+                it.app = a;
+                it.pkg = a.pkg;
+                it.title = ds.label.isEmpty() ? a.shown : ds.label;
+                Drawable art = a.banner(pm);
+                if (art == null) art = a.icon(pm);
+                it.glow = dominant(art);
+                dockItems.add(it);
+                dockSpecs.add(ds);
+            }
+        }
+        if (dockItems.isEmpty()) {
+            Config.DockSpec ds = new Config.DockSpec();
+            ds.type = "inputs";
+            Item it = new Item(Item.INPUTS_TILE);
+            it.title = "Inputs";
+            it.glow = 0xFF5B7CFA;
+            dockItems.add(it);
+            dockSpecs.add(ds);
+        }
+    }
+
+    private void prepareRows() {
+        int y = Math.max(dockY + bandH + Math.round(140 * s), H + Math.round(10 * s));
+        int gapRow = Math.round(56 * s);
+
+        if (cfg.showsEnabled) {
+            Row r = new Row();
+            r.title = cfg.showsTitle;
+            r.cardW = Math.round(W * 0.22f);
+            r.cardH = r.cardW * 9 / 16;
+            r.labelBelow = false;
+            for (Config.ShowSpec sp : cfg.shows) {
+                AppEntry a = sp.app.isEmpty() ? null : find(rawApps, sp.app);
+                Item it = new Item(Item.SHOW);
+                it.title = sp.title;
+                it.pkg = a != null ? a.pkg : "";
+                it.source = (a != null ? a.shown : sp.app).toUpperCase(Locale.ROOT);
+                it.uri = sp.uri;
+                it.posterRef = sp.poster;
+                r.items.add(it);
+            }
+            if (r.items.isEmpty()) r.items.add(placeholderShow());
+            showsRow = r;
+            rows.add(r);
+        }
+        if (cfg.otherEnabled) {
+            Row r = new Row();
+            r.title = cfg.otherTitle;
+            r.cardW = tileW;
+            r.cardH = tileH;
+            r.labelBelow = true;
+            Set<String> used = new HashSet<>();
+            for (List<String> spec : cfg.otherApps) {
+                AppEntry a = null;
+                for (String m : spec) {
+                    a = find(rawApps, m);
+                    if (a != null) break;
+                }
+                if (a == null || !used.add(a.cn.flattenToShortString())) continue;
+                Item it = new Item(Item.APP);
+                it.app = a;
+                it.pkg = a.pkg;
+                it.title = a.shown;
+                r.items.add(it);
+            }
+            if (cfg.moreApps) {
+                Item more = new Item(Item.MORE);
+                more.title = "More apps";
+                r.items.add(more);
+            }
+            if (!r.items.isEmpty()) rows.add(r);
+        }
+        if (cfg.playEnabled) {
+            Row r = new Row();
+            r.title = cfg.playTitle;
+            r.cardW = Math.round(W * 0.4f);
+            r.cardH = Math.round(r.cardW * 0.4f);
+            r.labelBelow = false;
+            Item play = new Item(Item.PLAY);
+            play.title = "Night Glider";
+            r.items.add(play);
+            rows.add(r);
+        }
+        for (Row r : rows) {
+            r.cellH = r.cardH + (r.labelBelow ? labelGap + labelH : 0);
+            r.top = y;
+            y += rowTitleH + rowGapTitle + r.cellH + gapRow;
+        }
+        pageH = Math.max(H, y + Math.round(60 * s));
+    }
+
+    private Item placeholderShow() {
+        Item it = new Item(Item.SHOW);
+        it.placeholder = true;
+        it.title = "Nothing here yet";
+        it.source = "MY SHOWS";
+        return it;
+    }
+
+    private void buildAmbient() {
         glowSize = Math.round(H * 0.95f);
         glow = new View(this);
         glowDrawable = new GradientDrawable();
@@ -303,37 +619,24 @@ public class MainActivity extends Activity {
         glowDrawable.setColors(new int[]{0, 0});
         glow.setBackground(glowDrawable);
         FrameLayout.LayoutParams gl = new FrameLayout.LayoutParams(glowSize, glowSize);
-        gl.leftMargin = 0;
-        gl.topMargin = dockY - glowSize / 2;
-        topLayer.addView(glow, gl);
+        gl.topMargin = dockY + bandH / 2 - glowSize / 2;
+        page.addView(glow, gl);
 
-        dockName = text("", 70 * s, 0xFFFFFFFF, tfThin);
-        FrameLayout.LayoutParams nl = new FrameLayout.LayoutParams(-2, -2);
-        nl.leftMargin = M;
-        nl.topMargin = dockY - Math.round(128 * s);
-        topLayer.addView(dockName, nl);
-    }
-
-    private void buildDockBand() {
-        int n = dockApps.size();
-        if (n == 0) return;
+        int n = dockItems.size();
         int bandW = n * tileW + (n - 1) * G + 2 * pad;
         View band = new View(this);
         band.setBackground(rr(0x1FFFFFFF, 44 * s));
         FrameLayout.LayoutParams bl = new FrameLayout.LayoutParams(bandW, bandH);
         bl.leftMargin = M - pad;
         bl.topMargin = dockY;
-        topLayer.addView(band, bl);
+        page.addView(band, bl);
     }
 
     private void buildHeader() {
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
         if (cfg.showGreeting) {
-            greetingView = text(greeting(), 28 * s, 0xB3FFFFFF, tfLight);
-            col.addView(greetingView);
-        } else {
-            greetingView = null;
+            col.addView(text(greeting(), 28 * s, 0xB3FFFFFF, tfLight));
         }
         TextClock clock = new TextClock(this);
         String f = cfg.clock24h ? "HH:mm" : "h:mm";
@@ -356,158 +659,639 @@ public class MainActivity extends Activity {
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-2, -2);
         lp.leftMargin = M;
         lp.topMargin = Math.round(54 * s);
-        topLayer.addView(col, lp);
+        page.addView(col, lp);
     }
 
-    private void buildPills() {
-        int pillH = Math.round(62 * s);
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setClipChildren(false);
-        String[] names = {"Inputs", "Wi-Fi", "Settings"};
-        for (int i = 0; i < names.length; i++) {
-            TextView p = text(names[i], 25 * s, 0xFFFFFFFF, tfLight);
-            if (i == 1) {
-                p.setText(wifiLabel());
-                wifiPill = p;
-            }
-            p.setGravity(Gravity.CENTER);
-            int ph = Math.round(30 * s);
-            p.setPadding(ph, 0, ph, 0);
-            p.setBackground(rr(0x33FFFFFF, pillH / 2f));
-            p.setFocusable(true);
-            p.setFocusableInTouchMode(true);
-            p.setClickable(true);
-            p.setId(View.generateViewId());
-            final int idx = i;
-            p.setOnFocusChangeListener((v, has) -> {
-                if (has) {
-                    setZone(Z_TOP);
-                    moveGlass(v, true);
-                }
-            });
-            p.setOnClickListener(v -> {
-                if (idx == 0) openInputs(v);
-                else if (idx == 1) openSettingsScreen(Settings.ACTION_WIFI_SETTINGS);
-                else openSettingsScreen(Settings.ACTION_SETTINGS);
-            });
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, pillH);
-            if (i > 0) lp.leftMargin = Math.round(16 * s);
-            row.addView(p, lp);
-            pills.add(p);
+    private void buildIcons() {
+        int d = Math.round(64 * s);
+        int gap = Math.round(18 * s);
+        for (int i = 0; i < 2; i++) {
+            FrameLayout btn = new FrameLayout(this);
+            btn.setBackground(rr(0x33FFFFFF, d / 2f));
+            btn.setFocusable(true);
+            btn.setFocusableInTouchMode(true);
+            btn.setClickable(true);
+            int p = Math.round(d * 0.2f);
+            ArtView art = new ArtView(this, i == 0 ? ArtView.WIFI : ArtView.GEAR);
+            FrameLayout.LayoutParams al = new FrameLayout.LayoutParams(d - 2 * p, d - 2 * p);
+            al.leftMargin = p;
+            al.topMargin = p;
+            btn.addView(art, al);
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(d, d, Gravity.TOP | Gravity.END);
+            lp.topMargin = Math.round(58 * s);
+            lp.rightMargin = i == 0 ? M + d + gap : M;
+            page.addView(btn, lp);
+            iconViews.add(btn);
         }
-        FrameLayout.LayoutParams rl = new FrameLayout.LayoutParams(-2, pillH, Gravity.TOP | Gravity.END);
-        rl.rightMargin = M;
-        rl.topMargin = Math.round(58 * s);
-        topLayer.addView(row, rl);
     }
 
-    private void buildDockTiles() {
-        int n = dockApps.size();
-        dockColors = new int[n];
+    private void wireIcons() {
+        final int n = iconViews.size();
         for (int i = 0; i < n; i++) {
             final int idx = i;
-            final AppEntry a = dockApps.get(i);
-            FrameLayout card = makeCard();
-            bindCard(card, a);
-            card.setId(View.generateViewId());
-            card.setFocusable(true);
-            card.setFocusableInTouchMode(true);
-            card.setClickable(true);
-            Drawable art = a.banner(pm);
-            if (art == null) art = a.icon(pm);
-            dockColors[i] = dominant(art);
-
-            card.setOnClickListener(v -> launch(a));
-            card.setOnLongClickListener(v -> {
-                showAppInfo(a);
-                return true;
-            });
-            card.setOnFocusChangeListener((v, has) -> {
+            final View v = iconViews.get(i);
+            v.setOnFocusChangeListener((view, has) -> {
                 if (has) {
-                    lastDock = idx;
-                    setZone(Z_DOCK);
-                    saveFocus("dock", idx);
-                    v.animate().scaleX(cfg.focusScale).scaleY(cfg.focusScale).setDuration(160).start();
-                    moveGlass(v, true);
-                    dockName.setText(a.shown);
-                    animateGlow(dockColors[idx], M + idx * (tileW + G) + tileW / 2);
-                } else {
-                    v.animate().scaleX(1f).scaleY(1f).setDuration(160).start();
+                    setZone(ZONE_ICONS);
+                    float m = 5 * s;
+                    RectF r = boundsIn(view, page);
+                    r.inset(-m, -m);
+                    pageGlass.moveTo(r, r.height() / 2f, true);
                 }
             });
-            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(tileW, tileH);
+            v.setOnKeyListener((view, key, e) -> {
+                if (e.getAction() != KeyEvent.ACTION_DOWN) return false;
+                switch (key) {
+                    case KeyEvent.KEYCODE_DPAD_LEFT:
+                        if (idx > 0) iconViews.get(idx - 1).requestFocus();
+                        return true;
+                    case KeyEvent.KEYCODE_DPAD_RIGHT:
+                        if (idx < n - 1) iconViews.get(idx + 1).requestFocus();
+                        return true;
+                    case KeyEvent.KEYCODE_DPAD_DOWN:
+                        focusDock(lastDock);
+                        return true;
+                    case KeyEvent.KEYCODE_DPAD_UP:
+                        return true;
+                    default:
+                        return false;
+                }
+            });
+            v.setOnClickListener(view -> openSettingsScreen(idx == 0
+                    ? Settings.ACTION_WIFI_SETTINGS : Settings.ACTION_SETTINGS));
+        }
+    }
+
+    private void buildTagline() {
+        taglineView = text("", 58 * s, 0xFFFFFFFF, tfThin);
+        taglineView.setSingleLine(true);
+        taglineView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        taglineView.setMaxWidth(W - 2 * M);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-2, -2);
+        lp.leftMargin = M;
+        lp.topMargin = dockY - Math.round(110 * s);
+        page.addView(taglineView, lp);
+    }
+
+    private void buildDock() {
+        tagIdx = new int[dockItems.size()];
+        for (int i = 0; i < dockItems.size(); i++) {
+            final int idx = i;
+            final Item it = dockItems.get(i);
+            tagIdx[i] = (int) (System.nanoTime() % 7);
+            final CardView cv = new CardView(it.kind, tileW, tileH, true);
+            cv.bind(it);
+            wire(cv, OWN_DOCK, 0, new PosSource() {
+                @Override
+                public int pos() {
+                    return idx;
+                }
+
+                @Override
+                public Item item() {
+                    return it;
+                }
+            });
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(tileW, dockCellH);
             lp.leftMargin = M + i * (tileW + G);
             lp.topMargin = dockY + pad;
-            topLayer.addView(card, lp);
-            dockViews.add(card);
+            page.addView(cv.cell, lp);
+            dockViews.add(cv);
         }
     }
 
-    private void buildGrid(int gridH) {
-        grid = new RecyclerView(this);
-        grid.setLayoutManager(new GridLayoutManager(this, cfg.columns));
-        grid.setClipChildren(false);
-        grid.setClipToPadding(false);
-        grid.setPadding(M, Math.round(24 * s), Math.max(0, M - G), Math.round(60 * s));
-        grid.setItemAnimator(null);
-        grid.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        grid.setFocusable(false);
-        grid.setAlpha(0f);
-        grid.setAdapter(new GridAdapter());
-        grid.addOnScrollListener(new RecyclerView.OnScrollListener() {
+    private void buildRowViews() {
+        for (int r = 0; r < rows.size(); r++) {
+            final Row row = rows.get(r);
+            TextView title = text(row.title, 30 * s, 0xCCFFFFFF, tfLight);
+            FrameLayout.LayoutParams tl = new FrameLayout.LayoutParams(-2, rowTitleH);
+            tl.leftMargin = M;
+            tl.topMargin = row.top;
+            page.addView(title, tl);
+
+            RecyclerView rv = new RecyclerView(this);
+            rv.setLayoutManager(new LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false));
+            rv.setClipChildren(false);
+            rv.setClipToPadding(false);
+            rv.setPadding(M, rowVpad, M, rowVpad);
+            rv.setItemAnimator(null);
+            rv.setOverScrollMode(View.OVER_SCROLL_NEVER);
+            rv.setFocusable(false);
+            CardAdapter ad = new CardAdapter(row.items, OWN_ROW, r, row.cardW, row.cardH, row.labelBelow);
+            row.adapter = ad;
+            row.rv = rv;
+            rv.setAdapter(ad);
+            rv.addOnScrollListener(new RecyclerView.OnScrollListener() {
+                @Override
+                public void onScrolled(RecyclerView v, int dx, int dy) {
+                    glassFollow(v, pageGlass, page);
+                }
+            });
+            FrameLayout.LayoutParams rl = new FrameLayout.LayoutParams(W, row.cellH + 2 * rowVpad);
+            rl.topMargin = row.top + rowTitleH + rowGapTitle - rowVpad;
+            page.addView(rv, rl);
+        }
+    }
+
+    // ------------------------------------------------------------------ cards
+
+    private final class CardView {
+        final int kind, ch;
+        final boolean hasLabel;
+        final FrameLayout cell, card;
+        final ImageView img;
+        final ArtView art;
+        final View scrim;
+        final LinearLayout over;
+        final TextView over1, over2, label;
+
+        CardView(int kind, int cw, int ch, boolean labelBelow) {
+            this.kind = kind;
+            this.ch = ch;
+            this.hasLabel = labelBelow;
+            cell = new FrameLayout(MainActivity.this);
+            cell.setClipChildren(false);
+            cell.setFocusable(true);
+            cell.setFocusableInTouchMode(true);
+            cell.setClickable(true);
+            cell.setTag(this);
+            card = makeCard();
+            cell.addView(card, new FrameLayout.LayoutParams(cw, ch));
+            img = new ImageView(MainActivity.this);
+            img.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            card.addView(img, new FrameLayout.LayoutParams(-1, -1));
+            art = new ArtView(MainActivity.this, ArtView.OTHER);
+            art.setVisibility(View.GONE);
+            card.addView(art, new FrameLayout.LayoutParams(-1, -1));
+            scrim = new View(MainActivity.this);
+            scrim.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                    new int[]{0x00000000, 0xD9000000}));
+            scrim.setVisibility(View.GONE);
+            card.addView(scrim, new FrameLayout.LayoutParams(-1, Math.round(ch * 0.62f), Gravity.BOTTOM));
+            over = new LinearLayout(MainActivity.this);
+            over.setOrientation(LinearLayout.VERTICAL);
+            over.setGravity(Gravity.BOTTOM | Gravity.START);
+            int op = Math.round(ch * 0.09f);
+            over.setPadding(op, op, op, op);
+            over.setVisibility(View.GONE);
+            over1 = text("", 20 * s, 0xCCFFFFFF, tfRegular);
+            over1.setSingleLine(true);
+            over2 = text("", 28 * s, 0xFFFFFFFF, tfRegular);
+            over2.setSingleLine(true);
+            over2.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            over.addView(over1);
+            over.addView(over2);
+            card.addView(over, new FrameLayout.LayoutParams(-1, -1));
+            label = text("", 24 * s, 0xFFFFFFFF, tfLight);
+            label.setGravity(Gravity.CENTER);
+            label.setSingleLine(true);
+            label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            label.setAlpha(0f);
+            if (labelBelow) {
+                FrameLayout.LayoutParams ll = new FrameLayout.LayoutParams(cw, labelH);
+                ll.topMargin = ch + labelGap;
+                cell.addView(label, ll);
+            }
+        }
+
+        void bind(Item it) {
+            card.setBackgroundColor(0xFF1C1C1E);
+            switch (it.kind) {
+                case Item.APP: {
+                    art.setVisibility(View.GONE);
+                    scrim.setVisibility(View.GONE);
+                    over.setVisibility(View.GONE);
+                    img.setVisibility(View.VISIBLE);
+                    Drawable b = it.app.banner(pm);
+                    if (b != null) {
+                        img.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                        img.setPadding(0, 0, 0, 0);
+                        img.setImageDrawable(b);
+                    } else {
+                        int p = Math.round(ch * 0.16f);
+                        img.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+                        img.setPadding(p, p, p, p);
+                        img.setImageDrawable(it.app.icon(pm));
+                    }
+                    label.setText(it.title);
+                    break;
+                }
+                case Item.SHOW: {
+                    art.setVisibility(View.GONE);
+                    scrim.setVisibility(View.VISIBLE);
+                    over.setVisibility(View.VISIBLE);
+                    over1.setText(it.source);
+                    over1.setTextColor(0xCCFFFFFF);
+                    over2.setText(it.title);
+                    img.setPadding(0, 0, 0, 0);
+                    img.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                    if (it.poster != null) {
+                        img.setVisibility(View.VISIBLE);
+                        img.setImageBitmap(it.poster);
+                    } else {
+                        img.setImageDrawable(null);
+                        card.setBackground(placeholder(it.title));
+                    }
+                    break;
+                }
+                case Item.MORE:
+                    img.setVisibility(View.GONE);
+                    scrim.setVisibility(View.GONE);
+                    over.setVisibility(View.GONE);
+                    art.setVisibility(View.VISIBLE);
+                    art.set(ArtView.MORE, false);
+                    label.setText(it.title);
+                    break;
+                case Item.PLAY:
+                    img.setVisibility(View.GONE);
+                    art.setVisibility(View.VISIBLE);
+                    art.set(ArtView.PLAY, false);
+                    scrim.setVisibility(View.VISIBLE);
+                    over.setVisibility(View.VISIBLE);
+                    over1.setText("PRESS OK TO PLAY");
+                    over1.setTextColor(0xCCFFFFFF);
+                    over2.setText(it.title);
+                    break;
+                case Item.INPUT:
+                    img.setVisibility(View.GONE);
+                    scrim.setVisibility(View.GONE);
+                    art.setVisibility(View.VISIBLE);
+                    art.set(it.artKind, it.connected);
+                    over.setVisibility(View.VISIBLE);
+                    over1.setText(it.sub);
+                    over1.setTextColor(it.connected ? 0xFF34D399 : 0x99FFFFFF);
+                    over2.setText(it.title);
+                    break;
+                case Item.INPUTS_TILE:
+                    img.setVisibility(View.GONE);
+                    scrim.setVisibility(View.GONE);
+                    over.setVisibility(View.GONE);
+                    art.setVisibility(View.VISIBLE);
+                    art.set(ArtView.INPUT_TILE, false);
+                    label.setText(it.title);
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+    private final class CardHolder extends RecyclerView.ViewHolder {
+        final CardView cv;
+
+        CardHolder(CardView cv) {
+            super(cv.cell);
+            this.cv = cv;
+        }
+    }
+
+    private final class CardAdapter extends RecyclerView.Adapter<CardHolder> {
+        final List<Item> items;
+        final int owner, idx, cw, ch;
+        final boolean labelBelow;
+
+        CardAdapter(List<Item> items, int owner, int idx, int cw, int ch, boolean labelBelow) {
+            this.items = items;
+            this.owner = owner;
+            this.idx = idx;
+            this.cw = cw;
+            this.ch = ch;
+            this.labelBelow = labelBelow;
+        }
+
+        @Override
+        public int getItemViewType(int position) {
+            return items.get(position).kind;
+        }
+
+        @Override
+        public CardHolder onCreateViewHolder(ViewGroup parent, int type) {
+            final CardView cv = new CardView(type, cw, ch, labelBelow);
+            int cellH = ch + (labelBelow ? labelGap + labelH : 0);
+            RecyclerView.LayoutParams lp = new RecyclerView.LayoutParams(cw, cellH);
+            lp.rightMargin = G;
+            if (owner == OWN_GRID) lp.bottomMargin = Math.round(18 * s);
+            cv.cell.setLayoutParams(lp);
+            final CardHolder h = new CardHolder(cv);
+            wire(cv, owner, idx, new PosSource() {
+                @Override
+                public int pos() {
+                    return h.getBindingAdapterPosition();
+                }
+
+                @Override
+                public Item item() {
+                    int p = h.getBindingAdapterPosition();
+                    return p >= 0 && p < items.size() ? items.get(p) : null;
+                }
+            });
+            return h;
+        }
+
+        @Override
+        public void onBindViewHolder(CardHolder h, int position) {
+            h.cv.bind(items.get(position));
+        }
+
+        @Override
+        public int getItemCount() {
+            return items.size();
+        }
+    }
+
+    private FrameLayout makeCard() {
+        FrameLayout card = new FrameLayout(this);
+        card.setBackgroundColor(0xFF1C1C1E);
+        final float r = cfg.corner * s;
+        card.setOutlineProvider(new ViewOutlineProvider() {
             @Override
-            public void onScrolled(RecyclerView rv, int dx, int dy) {
-                View f = getCurrentFocus();
-                if (f != null && f.getTag() instanceof Cell) moveGlass(f, false);
+            public void getOutline(View view, Outline outline) {
+                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), r);
             }
         });
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(W, gridH);
-        lp.topMargin = gridTop;
-        page.addView(grid, lp);
+        card.setClipToOutline(true);
+        card.setFocusable(false);
+        return card;
     }
 
-    private void buildDropdown() {
-        dropdown = new LinearLayout(this);
-        dropdown.setOrientation(LinearLayout.VERTICAL);
-        dropdown.setBackground(rr(0xF21C1C1E, 30 * s));
-        int p = Math.round(12 * s);
-        dropdown.setPadding(p, p, p, p);
-        dropdown.setVisibility(View.GONE);
-        page.addView(dropdown, new FrameLayout.LayoutParams(Math.round(380 * s), -2));
+    private Drawable placeholder(String t) {
+        float hue = Math.abs(t.hashCode() % 360);
+        int c1 = Color.HSVToColor(new float[]{hue, 0.50f, 0.42f});
+        int c2 = Color.HSVToColor(new float[]{hue, 0.55f, 0.18f});
+        return new GradientDrawable(GradientDrawable.Orientation.TL_BR, new int[]{c1, c2});
     }
 
-    /** Fixed D-pad rules for the top bar and the dock. The grid has its own in the adapter. */
-    private void wireNavigation() {
-        int n = pills.size();
-        for (int i = 0; i < n; i++) {
-            TextView p = pills.get(i);
-            p.setNextFocusUpId(p.getId());
-            p.setNextFocusLeftId(i > 0 ? pills.get(i - 1).getId() : p.getId());
-            p.setNextFocusRightId(i < n - 1 ? pills.get(i + 1).getId() : p.getId());
-            p.setOnKeyListener((v, key, e) -> {
-                if (e.getAction() == KeyEvent.ACTION_DOWN && key == KeyEvent.KEYCODE_DPAD_DOWN) {
-                    if (!dockViews.isEmpty()) focusDock(lastDock);
-                    else if (!gridApps.isEmpty()) focusGrid(0, 0);
-                    return true;
-                }
-                return false;
-            });
+    private void wire(final CardView cv, final int owner, final int idx, final PosSource ps) {
+        cv.cell.setOnFocusChangeListener((v, has) -> onCardFocus(cv, owner, idx, ps.pos(), has));
+        cv.cell.setOnKeyListener((v, key, e) -> e.getAction() == KeyEvent.ACTION_DOWN
+                && navKey(owner, idx, ps.pos(), key));
+        cv.cell.setOnClickListener(v -> activate(ps.item()));
+        cv.cell.setOnLongClickListener(v -> {
+            Item it = ps.item();
+            if (it != null && it.kind == Item.APP && it.app != null) {
+                showAppInfo(it.app);
+                return true;
+            }
+            return false;
+        });
+    }
+
+    private void onCardFocus(CardView cv, int owner, int idx, int pos, boolean has) {
+        if (!has) {
+            cv.card.animate().scaleX(1f).scaleY(1f).setDuration(160).start();
+            if (cv.hasLabel) cv.label.animate().alpha(0f).setDuration(120).start();
+            return;
         }
-        int d = dockViews.size();
-        for (int i = 0; i < d; i++) {
-            final int idx = i;
-            View v = dockViews.get(i);
-            v.setNextFocusLeftId(i > 0 ? dockViews.get(i - 1).getId() : v.getId());
-            v.setNextFocusRightId(i < d - 1 ? dockViews.get(i + 1).getId() : v.getId());
-            v.setNextFocusUpId(pills.get(0).getId());
-            v.setOnKeyListener((view, key, e) -> {
-                if (e.getAction() == KeyEvent.ACTION_DOWN && key == KeyEvent.KEYCODE_DPAD_DOWN) {
-                    if (!gridApps.isEmpty()) focusGrid(Math.min(idx, gridApps.size() - 1), 0);
-                    return true;
+        cv.card.animate().scaleX(cfg.focusScale).scaleY(cfg.focusScale).setDuration(160).start();
+        if (cv.hasLabel) cv.label.animate().alpha(1f).setDuration(160).start();
+        if (pos < 0) return;
+        if (owner == OWN_DOCK) {
+            lastDock = pos;
+            fOwner = owner;
+            fIdx = 0;
+            fPos = pos;
+            setZone(ZONE_DOCK);
+            saveFocus();
+            onDockFocus(pos);
+            moveGlassTo(pageGlass, page, cv, true);
+        } else if (owner == OWN_ROW) {
+            fOwner = owner;
+            fIdx = idx;
+            fPos = pos;
+            setZone(idx);
+            saveFocus();
+            moveGlassTo(pageGlass, page, cv, true);
+        } else if (owner == OWN_GRID) {
+            moveGlassTo(appsGlass, appsLayer, cv, true);
+        } else {
+            moveGlassTo(inputsGlass, inputsLayer, cv, true);
+        }
+    }
+
+    private void onDockFocus(int pos) {
+        if (pos >= dockItems.size()) return;
+        Item it = dockItems.get(pos);
+        Config.DockSpec ds = dockSpecs.get(pos);
+        if (!ds.taglines.isEmpty()) {
+            String t = ds.taglines.get(tagIdx[pos] % ds.taglines.size());
+            tagIdx[pos]++;
+            taglineView.setText(t);
+            taglineView.setAlpha(0f);
+            taglineView.animate().alpha(1f).setDuration(260).start();
+        } else {
+            taglineView.setText("");
+        }
+        animateGlow(it.glow, M + pos * (tileW + G) + tileW / 2);
+    }
+
+    // ------------------------------------------------------------------ navigation
+
+    private boolean navKey(int owner, int idx, int pos, int key) {
+        if (pos < 0) return false;
+        boolean arrow = key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT
+                || key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN;
+        if (!arrow) return false;
+        switch (owner) {
+            case OWN_DOCK: {
+                int n = dockViews.size();
+                if (key == KeyEvent.KEYCODE_DPAD_LEFT && pos > 0) focusDock(pos - 1);
+                else if (key == KeyEvent.KEYCODE_DPAD_RIGHT && pos < n - 1) focusDock(pos + 1);
+                else if (key == KeyEvent.KEYCODE_DPAD_UP && !iconViews.isEmpty()) {
+                    iconViews.get(iconViews.size() - 1).requestFocus();
+                } else if (key == KeyEvent.KEYCODE_DPAD_DOWN && !rows.isEmpty()) {
+                    focusRow(0, Math.min(pos, rows.get(0).items.size() - 1));
                 }
-                return false;
-            });
+                return true;
+            }
+            case OWN_ROW: {
+                Row row = rows.get(idx);
+                int n = row.items.size();
+                if (key == KeyEvent.KEYCODE_DPAD_LEFT) {
+                    if (pos > 0) focusRow(idx, pos - 1);
+                } else if (key == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                    if (pos < n - 1) focusRow(idx, pos + 1);
+                } else if (key == KeyEvent.KEYCODE_DPAD_UP) {
+                    if (idx > 0) focusRow(idx - 1, Math.min(pos, rows.get(idx - 1).items.size() - 1));
+                    else focusDock(Math.min(pos, dockViews.size() - 1));
+                } else if (idx < rows.size() - 1) {
+                    focusRow(idx + 1, Math.min(pos, rows.get(idx + 1).items.size() - 1));
+                }
+                return true;
+            }
+            case OWN_GRID: {
+                int n = appsItems.size();
+                int cols = appsCols;
+                int col = pos % cols;
+                if (key == KeyEvent.KEYCODE_DPAD_LEFT) {
+                    if (col > 0) focusRv(appsRv, pos - 1, 0);
+                } else if (key == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                    if (col < cols - 1 && pos + 1 < n) focusRv(appsRv, pos + 1, 0);
+                } else if (key == KeyEvent.KEYCODE_DPAD_UP) {
+                    if (pos >= cols) focusRv(appsRv, pos - cols, 0);
+                } else if (pos + cols < n) {
+                    focusRv(appsRv, pos + cols, 0);
+                } else if (pos / cols < (n - 1) / cols) {
+                    focusRv(appsRv, n - 1, 0);
+                }
+                return true;
+            }
+            default: {
+                int n = inputItems.size();
+                if (key == KeyEvent.KEYCODE_DPAD_LEFT && pos > 0) focusRv(inputsRv, pos - 1, 0);
+                else if (key == KeyEvent.KEYCODE_DPAD_RIGHT && pos < n - 1) focusRv(inputsRv, pos + 1, 0);
+                return true;
+            }
+        }
+    }
+
+    private void focusDock(int i) {
+        if (i < 0 || i >= dockViews.size()) return;
+        dockViews.get(i).cell.requestFocus();
+    }
+
+    private void focusRow(int r, int pos) {
+        if (r >= 0 && r < rows.size()) focusRv(rows.get(r).rv, pos, 0);
+    }
+
+    /** Focuses an item of a list, scrolling it into view first if it is not on screen yet. */
+    private void focusRv(final RecyclerView rv, final int pos, final int attempt) {
+        if (rv == null || rv.getAdapter() == null) return;
+        int n = rv.getAdapter().getItemCount();
+        if (n == 0) return;
+        final int p = Math.max(0, Math.min(pos, n - 1));
+        RecyclerView.ViewHolder vh = rv.findViewHolderForAdapterPosition(p);
+        if (vh != null) {
+            vh.itemView.requestFocus();
+            return;
+        }
+        if (attempt > 8) return;
+        rv.scrollToPosition(p);
+        rv.postDelayed(() -> focusRv(rv, p, attempt + 1), 60);
+    }
+
+    private void restoreFocus() {
+        int o = prefs.getInt("fo", OWN_DOCK);
+        int p = prefs.getInt("fp", 0);
+        fOwner = OWN_DOCK;
+        fIdx = 0;
+        fPos = o == OWN_DOCK ? p : 0;
+        refocusPage();
+    }
+
+    private void refocusPage() {
+        if (page == null) return;
+        if (fOwner == OWN_ROW && fIdx < rows.size()) {
+            focusRow(fIdx, fPos);
+        } else if (!dockViews.isEmpty()) {
+            focusDock(Math.max(0, Math.min(fPos, dockViews.size() - 1)));
+        } else if (!rows.isEmpty()) {
+            focusRow(0, 0);
+        } else if (!iconViews.isEmpty()) {
+            iconViews.get(0).requestFocus();
+        }
+    }
+
+    private void ensureFocus() {
+        if (inputsRv != null) focusRv(inputsRv, 0, 0);
+        else if (appsRv != null) focusRv(appsRv, 0, 0);
+        else refocusPage();
+    }
+
+    private void saveFocus() {
+        prefs.edit().putInt("fo", fOwner).putInt("fi", fIdx).putInt("fp", fPos).apply();
+    }
+
+    private void setZone(int z) {
+        if (z == zone || page == null) return;
+        zone = z;
+        float ty = (z >= 0 && z < rows.size()) ? -(rows.get(z).top - rowFocusY) : 0f;
+        page.animate().translationY(ty).setDuration(320).setInterpolator(new DecelerateInterpolator()).start();
+    }
+
+    // ------------------------------------------------------------------ glass and glow
+
+    private void moveGlassTo(GlassView g, View anc, CardView cv, boolean animate) {
+        if (g == null || anc == null) return;
+        float m = 5 * s;
+        RectF r = boundsIn(cv.card, anc);
+        grow(r, cfg.focusScale);
+        r.inset(-m, -m);
+        g.moveTo(r, cfg.corner * s * cfg.focusScale + m, animate);
+    }
+
+    private void glassFollow(RecyclerView rv, GlassView g, View anc) {
+        View f = getCurrentFocus();
+        if (f != null && f.getParent() == rv && f.getTag() instanceof CardView) {
+            moveGlassTo(g, anc, (CardView) f.getTag(), false);
+        }
+    }
+
+    private static RectF boundsIn(View v, View ancestor) {
+        float x = 0, y = 0;
+        View c = v;
+        while (c != null && c != ancestor) {
+            x += c.getLeft() + c.getTranslationX();
+            y += c.getTop() + c.getTranslationY();
+            if (!(c.getParent() instanceof View)) break;
+            View p = (View) c.getParent();
+            if (p != ancestor) {
+                x -= p.getScrollX();
+                y -= p.getScrollY();
+            }
+            c = p;
+        }
+        return new RectF(x, y, x + v.getWidth(), y + v.getHeight());
+    }
+
+    private static void grow(RectF r, float sc) {
+        float cx = r.centerX(), cy = r.centerY();
+        float hw = r.width() * sc / 2f, hh = r.height() * sc / 2f;
+        r.set(cx - hw, cy - hh, cx + hw, cy + hh);
+    }
+
+    private void animateGlow(int rgb, int centerX) {
+        glow.animate().translationX(centerX - glowSize / 2f).setDuration(400).start();
+        int target = (0x70 << 24) | (rgb & 0x00FFFFFF);
+        if (glowAnim != null) glowAnim.cancel();
+        glowAnim = ValueAnimator.ofObject(new ArgbEvaluator(), glowColor, target);
+        glowAnim.setDuration(450);
+        glowAnim.addUpdateListener(a -> {
+            glowColor = (int) a.getAnimatedValue();
+            glowDrawable.setColors(new int[]{glowColor, glowColor & 0x00FFFFFF});
+        });
+        glowAnim.start();
+    }
+
+    /** Average colour of the art, weighted towards the saturated parts. */
+    private static int dominant(Drawable d) {
+        if (d == null) return 0xFF3A3A3C;
+        try {
+            Bitmap b = Bitmap.createBitmap(16, 9, Bitmap.Config.ARGB_8888);
+            Canvas c = new Canvas(b);
+            d.setBounds(0, 0, 16, 9);
+            d.draw(c);
+            float[] hsv = new float[3];
+            double r = 0, g = 0, bl = 0, wsum = 0;
+            for (int x = 0; x < 16; x++) {
+                for (int y = 0; y < 9; y++) {
+                    int p = b.getPixel(x, y);
+                    if (Color.alpha(p) < 128) continue;
+                    Color.colorToHSV(p, hsv);
+                    double w = hsv[1] * hsv[2] + 0.02;
+                    r += Color.red(p) * w;
+                    g += Color.green(p) * w;
+                    bl += Color.blue(p) * w;
+                    wsum += w;
+                }
+            }
+            b.recycle();
+            if (wsum <= 0) return 0xFF3A3A3C;
+            int rgb = Color.rgb((int) (r / wsum), (int) (g / wsum), (int) (bl / wsum));
+            Color.colorToHSV(rgb, hsv);
+            hsv[2] = Math.max(hsv[2], 0.7f);
+            return Color.HSVToColor(255, hsv);
+        } catch (Throwable t) {
+            return 0xFF3A3A3C;
         }
     }
 
@@ -551,49 +1335,37 @@ public class MainActivity extends Activity {
         return sb.toString();
     }
 
-    private void partition(List<AppEntry> raw) {
-        dockApps.clear();
-        gridApps.clear();
-        for (AppEntry a : raw) {
+    private void applyRenames() {
+        for (AppEntry a : rawApps) {
             a.shown = a.label;
             for (Map.Entry<String, String> e : cfg.rename.entrySet()) {
-                if (a.matches(e.getKey().toLowerCase(Locale.ROOT).trim())) a.shown = e.getValue();
+                String k = e.getKey().toLowerCase(Locale.ROOT).trim();
+                if (a.pkg.equalsIgnoreCase(k) || a.label.equalsIgnoreCase(k)) a.shown = e.getValue();
             }
         }
-        for (List<String> options : cfg.dock) {
-            AppEntry hit = null;
-            for (String m : options) {
-                hit = find(raw, m);
-                if (hit != null) break;
-            }
-            if (hit != null && !dockApps.contains(hit)) dockApps.add(hit);
-        }
-        List<AppEntry> rest = new ArrayList<>();
-        for (AppEntry a : raw) {
-            if (!cfg.showDockAppsInGrid && dockApps.contains(a)) continue;
-            boolean hide = false;
-            for (String h : cfg.hidden) {
-                if (a.matches(h.toLowerCase(Locale.ROOT).trim())) hide = true;
-            }
-            if (!hide) rest.add(a);
-        }
-        for (String p : cfg.pinned) {
-            AppEntry hit = find(rest, p);
-            if (hit != null) {
-                rest.remove(hit);
-                gridApps.add(hit);
-            }
-        }
-        gridApps.addAll(rest);
     }
 
-    /** exact package, then exact name, then "contains". */
+    private boolean isHidden(AppEntry a) {
+        for (String h : cfg.hidden) {
+            String k = h.toLowerCase(Locale.ROOT).trim();
+            if (a.pkg.equalsIgnoreCase(k) || a.label.equalsIgnoreCase(k)) return true;
+        }
+        return false;
+    }
+
+    /** exact package, then exact name, then name contains, then package contains. */
     private static AppEntry find(List<AppEntry> list, String m) {
         String q = m.toLowerCase(Locale.ROOT).trim();
         if (q.isEmpty()) return null;
         for (AppEntry a : list) if (a.pkg.equalsIgnoreCase(q)) return a;
         for (AppEntry a : list) if (a.label.equalsIgnoreCase(q)) return a;
-        for (AppEntry a : list) if (a.matches(q)) return a;
+        for (AppEntry a : list) if (a.label.toLowerCase(Locale.ROOT).contains(q)) return a;
+        for (AppEntry a : list) if (a.pkg.toLowerCase(Locale.ROOT).contains(q)) return a;
+        return null;
+    }
+
+    private AppEntry findPkg(String pkg) {
+        for (AppEntry a : rawApps) if (a.pkg.equals(pkg)) return a;
         return null;
     }
 
@@ -643,393 +1415,366 @@ public class MainActivity extends Activity {
         Toast.makeText(this, "Can't open settings", Toast.LENGTH_SHORT).show();
     }
 
-    // ------------------------------------------------------------------ grid
+    // ------------------------------------------------------------------ actions
 
-    private final class Cell extends RecyclerView.ViewHolder {
-        final FrameLayout card;
-        final TextView label;
-
-        Cell(FrameLayout cell, FrameLayout card, TextView label) {
-            super(cell);
-            this.card = card;
-            this.label = label;
+    private void activate(Item it) {
+        if (it == null) return;
+        switch (it.kind) {
+            case Item.APP:
+                if (it.app != null) launch(it.app);
+                break;
+            case Item.SHOW:
+                openShow(it);
+                break;
+            case Item.MORE:
+                openApps();
+                break;
+            case Item.PLAY:
+                openGame();
+                break;
+            case Item.INPUT:
+                startInput(it);
+                break;
+            case Item.INPUTS_TILE:
+                openInputs();
+                break;
+            default:
+                break;
         }
     }
 
-    private final class GridAdapter extends RecyclerView.Adapter<Cell> {
-        @Override
-        public Cell onCreateViewHolder(ViewGroup parent, int type) {
-            FrameLayout cell = new FrameLayout(MainActivity.this);
-            cell.setLayoutParams(new RecyclerView.LayoutParams(-1, cellH));
-            cell.setClipChildren(false);
-            cell.setFocusable(true);
-            cell.setFocusableInTouchMode(true);
-            cell.setClickable(true);
-
-            FrameLayout card = makeCard();
-            cell.addView(card, new FrameLayout.LayoutParams(tileW, tileH));
-
-            TextView label = text("", 24 * s, 0xFFFFFFFF, tfLight);
-            label.setGravity(Gravity.CENTER);
-            label.setSingleLine(true);
-            label.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            label.setAlpha(0f);
-            FrameLayout.LayoutParams ll = new FrameLayout.LayoutParams(tileW, labelH);
-            ll.topMargin = tileH + Math.round(14 * s);
-            cell.addView(label, ll);
-
-            final Cell h = new Cell(cell, card, label);
-            cell.setTag(h);
-
-            cell.setOnFocusChangeListener((v, has) -> {
-                if (has) {
-                    setZone(Z_GRID);
-                    int pos = h.getBindingAdapterPosition();
-                    if (pos >= 0) saveFocus("grid", pos);
-                    h.card.animate().scaleX(cfg.focusScale).scaleY(cfg.focusScale).setDuration(160).start();
-                    h.label.animate().alpha(1f).setDuration(160).start();
-                    moveGlass(v, true);
-                } else {
-                    h.card.animate().scaleX(1f).scaleY(1f).setDuration(160).start();
-                    h.label.animate().alpha(0f).setDuration(120).start();
-                }
-            });
-            cell.setOnKeyListener((v, key, e) -> {
-                if (e.getAction() != KeyEvent.ACTION_DOWN) return false;
-                int pos = h.getBindingAdapterPosition();
-                if (pos < 0) return false;
-                int cols = cfg.columns;
-                int n = gridApps.size();
-                int col = pos % cols;
-                switch (key) {
-                    case KeyEvent.KEYCODE_DPAD_LEFT:
-                        if (col > 0) focusGrid(pos - 1, 0);
-                        return true;
-                    case KeyEvent.KEYCODE_DPAD_RIGHT:
-                        if (col < cols - 1 && pos + 1 < n) focusGrid(pos + 1, 0);
-                        return true;
-                    case KeyEvent.KEYCODE_DPAD_DOWN:
-                        if (pos + cols < n) focusGrid(pos + cols, 0);
-                        else if (pos / cols < (n - 1) / cols) focusGrid(n - 1, 0);
-                        return true;
-                    case KeyEvent.KEYCODE_DPAD_UP:
-                        if (pos >= cols) focusGrid(pos - cols, 0);
-                        else if (!dockViews.isEmpty()) focusDock(Math.min(col, dockViews.size() - 1));
-                        else pills.get(0).requestFocus();
-                        return true;
-                    default:
-                        return false;
-                }
-            });
-            return h;
-        }
-
-        @Override
-        public void onBindViewHolder(Cell h, int pos) {
-            final AppEntry a = gridApps.get(pos);
-            bindCard(h.card, a);
-            h.label.setText(a.shown);
-            h.itemView.setOnClickListener(v -> launch(a));
-            h.itemView.setOnLongClickListener(v -> {
-                showAppInfo(a);
-                return true;
-            });
-        }
-
-        @Override
-        public int getItemCount() {
-            return gridApps.size();
-        }
-    }
-
-    /** Moves focus to a grid item, scrolling it into view first if it is not on screen. */
-    private void focusGrid(final int pos, final int attempt) {
-        if (grid == null || pos < 0 || pos >= gridApps.size()) return;
-        RecyclerView.ViewHolder vh = grid.findViewHolderForAdapterPosition(pos);
-        if (vh != null) {
-            vh.itemView.requestFocus();
+    /**
+     * Opens a show inside its own app. The link may only be handled by that app (we pin the
+     * package), and if the link fails we just open the app.
+     */
+    private void openShow(Item it) {
+        if (it.placeholder) {
+            Toast.makeText(this, "Add shows in config.json, or watch something in your apps",
+                    Toast.LENGTH_LONG).show();
             return;
         }
-        if (attempt > 8) return;
-        grid.scrollToPosition(pos);
-        grid.postDelayed(() -> focusGrid(pos, attempt + 1), 60);
-    }
-
-    private void focusDock(int i) {
-        if (i < 0 || i >= dockViews.size()) return;
-        dockViews.get(i).requestFocus();
-    }
-
-    private void restoreFocus() {
-        String z = prefs.getString("z", "dock");
-        int i = prefs.getInt("i", 0);
-        if ("grid".equals(z) && i < gridApps.size()) {
-            focusGrid(i, 0);
-        } else if (!dockViews.isEmpty()) {
-            focusDock(Math.min(i, dockViews.size() - 1));
-        } else if (!gridApps.isEmpty()) {
-            focusGrid(0, 0);
-        } else if (!pills.isEmpty()) {
-            pills.get(0).requestFocus();
-        }
-    }
-
-    private void saveFocus(String z, int i) {
-        prefs.edit().putString("z", z).putInt("i", i).apply();
-    }
-
-    // ------------------------------------------------------------------ zones, glass, glow
-
-    private void setZone(int z) {
-        if (z == zone || page == null) return;
-        zone = z;
-        boolean g = z == Z_GRID;
-        page.animate().translationY(g ? -shift : 0).setDuration(320)
-                .setInterpolator(new DecelerateInterpolator()).start();
-        topLayer.animate().alpha(g ? 0f : 1f).setDuration(220).start();
-        grid.animate().alpha(g ? 1f : 0f).setDuration(220).start();
-    }
-
-    private void moveGlass(View v, boolean animate) {
-        if (glass == null || page == null) return;
-        float m = 5 * s;
-        RectF r;
-        float rad;
-        Object tag = v.getTag();
-        if (tag instanceof Cell) {
-            r = boundsIn(((Cell) tag).card, page);
-            grow(r, cfg.focusScale);
-            r.inset(-m, -m);
-            rad = cfg.corner * s * cfg.focusScale + m;
-        } else if (dockViews.contains(v)) {
-            r = boundsIn(v, page);
-            grow(r, cfg.focusScale);
-            r.inset(-m, -m);
-            rad = cfg.corner * s * cfg.focusScale + m;
-        } else {
-            r = boundsIn(v, page);
-            rad = tag instanceof Float ? (Float) tag : r.height() / 2f;
-        }
-        glass.moveTo(r, rad, animate);
-    }
-
-    private static RectF boundsIn(View v, View ancestor) {
-        float x = 0, y = 0;
-        View c = v;
-        while (c != null && c != ancestor) {
-            x += c.getLeft() + c.getTranslationX();
-            y += c.getTop() + c.getTranslationY();
-            if (!(c.getParent() instanceof View)) break;
-            c = (View) c.getParent();
-        }
-        return new RectF(x, y, x + v.getWidth(), y + v.getHeight());
-    }
-
-    private static void grow(RectF r, float sc) {
-        float cx = r.centerX(), cy = r.centerY();
-        float hw = r.width() * sc / 2f, hh = r.height() * sc / 2f;
-        r.set(cx - hw, cy - hh, cx + hw, cy + hh);
-    }
-
-    private void animateGlow(int rgb, int centerX) {
-        glow.animate().translationX(centerX - glowSize / 2f).setDuration(400).start();
-        int target = (0x6B << 24) | (rgb & 0x00FFFFFF);
-        if (glowAnim != null) glowAnim.cancel();
-        glowAnim = ValueAnimator.ofObject(new ArgbEvaluator(), glowColor, target);
-        glowAnim.setDuration(450);
-        glowAnim.addUpdateListener(a -> {
-            glowColor = (int) a.getAnimatedValue();
-            glowDrawable.setColors(new int[]{glowColor, glowColor & 0x00FFFFFF});
-        });
-        glowAnim.start();
-    }
-
-    /** Average colour of the art, weighted towards the saturated parts. */
-    private static int dominant(Drawable d) {
-        if (d == null) return 0xFF3A3A3C;
-        try {
-            Bitmap b = Bitmap.createBitmap(16, 9, Bitmap.Config.ARGB_8888);
-            Canvas c = new Canvas(b);
-            d.setBounds(0, 0, 16, 9);
-            d.draw(c);
-            float[] hsv = new float[3];
-            double r = 0, g = 0, bl = 0, wsum = 0;
-            for (int x = 0; x < 16; x++) {
-                for (int y = 0; y < 9; y++) {
-                    int p = b.getPixel(x, y);
-                    if (Color.alpha(p) < 128) continue;
-                    Color.colorToHSV(p, hsv);
-                    double w = hsv[1] * hsv[2] + 0.02;
-                    r += Color.red(p) * w;
-                    g += Color.green(p) * w;
-                    bl += Color.blue(p) * w;
-                    wsum += w;
-                }
+        AppEntry a = it.pkg.isEmpty() ? null : findPkg(it.pkg);
+        if (a != null && !it.uri.isEmpty()) {
+            try {
+                Intent i = it.uri.startsWith("intent:")
+                        ? Intent.parseUri(it.uri, Intent.URI_INTENT_SCHEME)
+                        : new Intent(Intent.ACTION_VIEW, Uri.parse(it.uri));
+                i.setComponent(null);
+                i.setSelector(null);
+                i.setPackage(a.pkg);
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(i);
+                return;
+            } catch (Throwable ignored) {
+                // fall back to opening the app
             }
-            b.recycle();
-            if (wsum <= 0) return 0xFF3A3A3C;
-            int rgb = Color.rgb((int) (r / wsum), (int) (g / wsum), (int) (bl / wsum));
-            Color.colorToHSV(rgb, hsv);
-            hsv[2] = Math.max(hsv[2], 0.7f);
-            return Color.HSVToColor(255, hsv);
-        } catch (Throwable t) {
-            return 0xFF3A3A3C;
         }
+        if (a != null) launch(a);
+        else Toast.makeText(this, "App not found for " + it.title, Toast.LENGTH_SHORT).show();
     }
 
-    // ------------------------------------------------------------------ inputs dropdown
-
-    private static final class InputItem {
-        final String id;
-        final String label;
-        final boolean passthrough;
-
-        InputItem(String id, String label, boolean passthrough) {
-            this.id = id;
-            this.label = label;
-            this.passthrough = passthrough;
-        }
-    }
-
-    private List<InputItem> queryInputs() {
-        List<InputItem> live = new ArrayList<>();
-        List<InputItem> ports = new ArrayList<>();
-        try {
-            TvInputManager tm = (TvInputManager) getSystemService(Context.TV_INPUT_SERVICE);
-            if (tm != null) {
-                for (TvInputInfo i : tm.getTvInputList()) {
-                    boolean pass = i.isPassthroughInput();
-                    if (!pass && i.getType() != TvInputInfo.TYPE_TUNER) continue;
-                    if (!pass) {
-                        if (live.isEmpty()) live.add(new InputItem(i.getId(), "Live TV", false));
-                        continue;
-                    }
-                    CharSequence custom = i.loadCustomLabel(this);
-                    CharSequence lab = i.loadLabel(this);
-                    String label = custom != null && custom.length() > 0 ? custom.toString()
-                            : lab != null ? lab.toString() : i.getId();
-                    ports.add(new InputItem(i.getId(), label, true));
-                }
-            }
-        } catch (Throwable ignored) {
-            // empty list shows "No inputs found"
-        }
-        Collections.sort(ports, new Comparator<InputItem>() {
-            @Override
-            public int compare(InputItem x, InputItem y) {
-                return x.label.compareToIgnoreCase(y.label);
-            }
-        });
-        List<InputItem> out = new ArrayList<>(live);
-        out.addAll(ports);
-        return out;
-    }
-
-    private void openInputs(View anchor) {
-        dropdown.removeAllViews();
-        dropdownItems.clear();
-        List<InputItem> items = queryInputs();
-        if (items.isEmpty()) items.add(new InputItem("", "No inputs found", false));
-        for (int i = 0; i < items.size(); i++) {
-            final InputItem it = items.get(i);
-            final int idx = i;
-            TextView t = text(it.label, 26 * s, 0xFFFFFFFF, tfLight);
-            int ph = Math.round(24 * s), pv = Math.round(16 * s);
-            t.setPadding(ph, pv, ph, pv);
-            t.setSingleLine(true);
-            t.setFocusable(true);
-            t.setFocusableInTouchMode(true);
-            t.setClickable(true);
-            t.setTag(Float.valueOf(18 * s));
-            t.setOnFocusChangeListener((v, has) -> {
-                if (has) moveGlass(v, true);
-            });
-            t.setOnClickListener(v -> {
-                closeDropdown(false);
-                startInput(it);
-            });
-            t.setOnKeyListener((v, key, e) -> {
-                if (e.getAction() != KeyEvent.ACTION_DOWN) return false;
-                switch (key) {
-                    case KeyEvent.KEYCODE_DPAD_UP:
-                        if (idx > 0) dropdownItems.get(idx - 1).requestFocus();
-                        return true;
-                    case KeyEvent.KEYCODE_DPAD_DOWN:
-                        if (idx < dropdownItems.size() - 1) dropdownItems.get(idx + 1).requestFocus();
-                        return true;
-                    case KeyEvent.KEYCODE_DPAD_LEFT:
-                    case KeyEvent.KEYCODE_DPAD_RIGHT:
-                        return true;
-                    default:
-                        return false;
-                }
-            });
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-            if (i > 0) lp.topMargin = Math.round(4 * s);
-            dropdown.addView(t, lp);
-            dropdownItems.add(t);
-        }
-        RectF a = boundsIn(anchor, page);
-        int w = Math.round(380 * s);
-        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) dropdown.getLayoutParams();
-        lp.leftMargin = Math.round(Math.max(M, Math.min(a.left, W - M - w)));
-        lp.topMargin = Math.round(a.bottom + 12 * s);
-        dropdown.setLayoutParams(lp);
-        dropdown.setVisibility(View.VISIBLE);
-        dropdownItems.get(0).post(() -> dropdownItems.get(0).requestFocus());
-    }
-
-    private void closeDropdown(boolean refocus) {
-        if (dropdown == null || dropdown.getVisibility() != View.VISIBLE) return;
-        dropdown.setVisibility(View.GONE);
-        dropdownItems.clear();
-        dropdown.removeAllViews();
-        if (refocus && !pills.isEmpty()) pills.get(0).requestFocus();
-    }
-
-    private void startInput(InputItem it) {
-        if (it.id.isEmpty()) return;
+    private void startInput(Item it) {
+        closeOverlays(false);
+        if (it.inputId.isEmpty()) return;
         try {
             Uri u = it.passthrough
-                    ? TvContract.buildChannelUriForPassthroughInput(it.id)
+                    ? TvContract.buildChannelUriForPassthroughInput(it.inputId)
                     : TvContract.Channels.CONTENT_URI;
             Intent i = new Intent(Intent.ACTION_VIEW, u);
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             startActivity(i);
         } catch (Throwable t) {
-            Toast.makeText(this, "Can't switch to " + it.label, Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Can't switch to " + it.title, Toast.LENGTH_SHORT).show();
         }
+    }
+
+    // ------------------------------------------------------------------ overlays
+
+    private List<Item> queryInputs() {
+        List<Item> live = new ArrayList<>();
+        List<Item> ports = new ArrayList<>();
+        try {
+            TvInputManager tm = (TvInputManager) getSystemService(Context.TV_INPUT_SERVICE);
+            if (tm != null) {
+                for (TvInputInfo i : tm.getTvInputList()) {
+                    if (!i.isPassthroughInput()) {
+                        if (i.getType() == TvInputInfo.TYPE_TUNER && live.isEmpty()) {
+                            Item it = new Item(Item.INPUT);
+                            it.title = "Live TV";
+                            it.sub = "Antenna / cable";
+                            it.inputId = i.getId();
+                            it.passthrough = false;
+                            it.artKind = ArtView.LIVE;
+                            live.add(it);
+                        }
+                        continue;
+                    }
+                    Item it = new Item(Item.INPUT);
+                    CharSequence custom = i.loadCustomLabel(this);
+                    CharSequence lab = i.loadLabel(this);
+                    it.title = custom != null && custom.length() > 0 ? custom.toString()
+                            : (lab != null ? lab.toString() : i.getId());
+                    it.inputId = i.getId();
+                    it.passthrough = true;
+                    int type = i.getType();
+                    if (type == TvInputInfo.TYPE_HDMI) it.artKind = ArtView.HDMI;
+                    else if (type == TvInputInfo.TYPE_COMPOSITE || type == TvInputInfo.TYPE_COMPONENT
+                            || type == TvInputInfo.TYPE_SVIDEO || type == TvInputInfo.TYPE_SCART) {
+                        it.artKind = ArtView.AV;
+                    } else it.artKind = ArtView.OTHER;
+                    int st = TvInputManager.INPUT_STATE_DISCONNECTED;
+                    try {
+                        st = tm.getInputState(i.getId());
+                    } catch (Throwable ignored) {
+                        // leave as not connected
+                    }
+                    it.connected = st == TvInputManager.INPUT_STATE_CONNECTED;
+                    it.sub = st == TvInputManager.INPUT_STATE_CONNECTED ? "Connected"
+                            : (st == TvInputManager.INPUT_STATE_CONNECTED_STANDBY ? "Standby" : "No signal");
+                    ports.add(it);
+                }
+            }
+        } catch (Throwable ignored) {
+            // an empty list shows "No inputs found"
+        }
+        Collections.sort(ports, new Comparator<Item>() {
+            @Override
+            public int compare(Item x, Item y) {
+                return x.title.compareToIgnoreCase(y.title);
+            }
+        });
+        List<Item> out = new ArrayList<>(live);
+        out.addAll(ports);
+        return out;
+    }
+
+    private void openInputs() {
+        closeOverlays(false);
+        inputItems.clear();
+        inputItems.addAll(queryInputs());
+        if (inputItems.isEmpty()) {
+            Item none = new Item(Item.INPUT);
+            none.title = "No inputs found";
+            none.sub = "";
+            none.artKind = ArtView.OTHER;
+            inputItems.add(none);
+        }
+        FrameLayout layer = new FrameLayout(this);
+        layer.setBackgroundColor(0xE6000000);
+
+        TextView title = text("Inputs", 72 * s, 0xFFFFFFFF, tfThin);
+        FrameLayout.LayoutParams tl = new FrameLayout.LayoutParams(-2, -2);
+        tl.leftMargin = M;
+        tl.topMargin = Math.round(H * 0.2f);
+        layer.addView(title, tl);
+        TextView hint = text("Choose what to watch", 28 * s, 0x99FFFFFF, tfLight);
+        FrameLayout.LayoutParams hl = new FrameLayout.LayoutParams(-2, -2);
+        hl.leftMargin = M;
+        hl.topMargin = Math.round(H * 0.2f + 92 * s);
+        layer.addView(hint, hl);
+
+        int cw = Math.round(W * 0.155f);
+        int ch = Math.round(cw * 0.8f);
+        int vpad = Math.round(24 * s);
+        RecyclerView rv = new RecyclerView(this);
+        rv.setLayoutManager(new LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false));
+        rv.setClipChildren(false);
+        rv.setClipToPadding(false);
+        rv.setPadding(M, vpad, M, vpad);
+        rv.setItemAnimator(null);
+        rv.setFocusable(false);
+        rv.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        rv.setAdapter(new CardAdapter(inputItems, OWN_INPUTS, 0, cw, ch, false));
+        FrameLayout.LayoutParams rl = new FrameLayout.LayoutParams(W, ch + 2 * vpad);
+        rl.topMargin = Math.round(H * 0.44f);
+        layer.addView(rv, rl);
+
+        GlassView g = new GlassView(this, cfg.glassColor, cfg.glassOpacity, Math.max(1.5f, 2f * s));
+        layer.addView(g, new FrameLayout.LayoutParams(-1, -1));
+        rv.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrolled(RecyclerView v, int dx, int dy) {
+                glassFollow(v, inputsGlass, inputsLayer);
+            }
+        });
+        root.addView(layer, new FrameLayout.LayoutParams(-1, -1));
+        inputsLayer = layer;
+        inputsGlass = g;
+        inputsRv = rv;
+        layer.setAlpha(0f);
+        layer.animate().alpha(1f).setDuration(180).start();
+        final RecyclerView target = rv;
+        layer.post(() -> focusRv(target, 0, 0));
+    }
+
+    private void openApps() {
+        closeOverlays(false);
+        appsItems.clear();
+        for (AppEntry a : rawApps) {
+            if (isHidden(a)) continue;
+            Item it = new Item(Item.APP);
+            it.app = a;
+            it.pkg = a.pkg;
+            it.title = a.shown;
+            appsItems.add(it);
+        }
+        appsCols = cfg.columns;
+        int cw = (W - 2 * M - (appsCols - 1) * G) / appsCols;
+        int ch = cw * 9 / 16;
+        FrameLayout layer = new FrameLayout(this);
+        layer.setBackgroundColor(0xF2000000);
+
+        TextView title = text("All apps", 56 * s, 0xFFFFFFFF, tfThin);
+        FrameLayout.LayoutParams tl = new FrameLayout.LayoutParams(-2, -2);
+        tl.leftMargin = M;
+        tl.topMargin = Math.round(60 * s);
+        layer.addView(title, tl);
+
+        RecyclerView rv = new RecyclerView(this);
+        rv.setLayoutManager(new GridLayoutManager(this, appsCols));
+        rv.setClipChildren(false);
+        rv.setClipToPadding(false);
+        rv.setPadding(M, Math.round(24 * s), Math.max(0, M - G), Math.round(80 * s));
+        rv.setItemAnimator(null);
+        rv.setFocusable(false);
+        rv.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        rv.setAdapter(new CardAdapter(appsItems, OWN_GRID, 0, cw, ch, true));
+        int top = Math.round(160 * s);
+        FrameLayout.LayoutParams rl = new FrameLayout.LayoutParams(W, H - top);
+        rl.topMargin = top;
+        layer.addView(rv, rl);
+
+        GlassView g = new GlassView(this, cfg.glassColor, cfg.glassOpacity, Math.max(1.5f, 2f * s));
+        layer.addView(g, new FrameLayout.LayoutParams(-1, -1));
+        rv.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrolled(RecyclerView v, int dx, int dy) {
+                glassFollow(v, appsGlass, appsLayer);
+            }
+        });
+        root.addView(layer, new FrameLayout.LayoutParams(-1, -1));
+        appsLayer = layer;
+        appsGlass = g;
+        appsRv = rv;
+        layer.setAlpha(0f);
+        layer.animate().alpha(1f).setDuration(180).start();
+        final RecyclerView target = rv;
+        layer.post(() -> focusRv(target, 0, 0));
+    }
+
+    private void closeOverlays(boolean refocus) {
+        boolean any = inputsLayer != null || appsLayer != null;
+        if (inputsLayer != null) {
+            root.removeView(inputsLayer);
+            inputsLayer = null;
+            inputsRv = null;
+            inputsGlass = null;
+        }
+        if (appsLayer != null) {
+            root.removeView(appsLayer);
+            appsLayer = null;
+            appsRv = null;
+            appsGlass = null;
+        }
+        if (any && refocus) refocusPage();
+    }
+
+    private void openGame() {
+        closeOverlays(false);
+        if (gameView != null) return;
+        gameView = new GameView(this, new GameView.Host() {
+            @Override
+            public void onExit() {
+                closeGame(true);
+            }
+        });
+        root.addView(gameView, new FrameLayout.LayoutParams(-1, -1));
+        root.post(() -> {
+            if (gameView != null) gameView.requestFocus();
+        });
+    }
+
+    private void closeGame(boolean refocus) {
+        if (gameView == null) return;
+        root.removeView(gameView);
+        gameView = null;
+        if (refocus) refocusPage();
+    }
+
+    // ------------------------------------------------------------------ My Shows
+
+    private void submit(Runnable r) {
+        try {
+            io.execute(r);
+        } catch (Throwable ignored) {
+            // shutting down
+        }
+    }
+
+    private void loadShows(final int myGen) {
+        final Row row = showsRow;
+        if (row == null) return;
+        for (Item it : new ArrayList<>(row.items)) startPoster(it, row, myGen);
+        if (!cfg.watchNext) return;
+        submit(() -> {
+            final List<WatchNext.Program> progs = WatchNext.read(MainActivity.this);
+            runOnUiThread(() -> {
+                if (myGen != gen || isDestroyed()) return;
+                applyWatchNext(row, progs, myGen);
+            });
+        });
+    }
+
+    private void applyWatchNext(Row row, List<WatchNext.Program> progs, int myGen) {
+        List<Item> merged = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (WatchNext.Program p : progs) {
+            if (merged.size() >= cfg.maxShows) break;
+            AppEntry a = findPkg(p.pkg);
+            if (a == null) continue;
+            if (!seen.add(p.title.toLowerCase(Locale.ROOT))) continue;
+            Item it = new Item(Item.SHOW);
+            it.title = p.title;
+            it.pkg = p.pkg;
+            it.source = a.shown.toUpperCase(Locale.ROOT);
+            it.uri = p.intentUri == null ? "" : p.intentUri;
+            it.posterRef = p.posterUri == null ? "" : p.posterUri;
+            merged.add(it);
+        }
+        if (merged.isEmpty()) return; // keep whatever is shown now
+        for (Item it : row.items) {
+            if (it.placeholder || merged.size() >= cfg.maxShows) continue;
+            if (seen.add(it.title.toLowerCase(Locale.ROOT))) merged.add(it);
+        }
+        row.items.clear();
+        row.items.addAll(merged);
+        row.adapter.notifyDataSetChanged();
+        for (Item it : new ArrayList<>(row.items)) startPoster(it, row, myGen);
+    }
+
+    private void startPoster(final Item it, final Row row, final int myGen) {
+        if (it.poster != null || it.posterRef.isEmpty()) return;
+        final Config c = cfg;
+        final int reqW = row.cardW, reqH = row.cardH;
+        submit(() -> {
+            final Bitmap b = WatchNext.loadPoster(MainActivity.this, c, it.posterRef, reqW, reqH);
+            if (b == null) return;
+            runOnUiThread(() -> {
+                if (myGen != gen || isDestroyed()) return;
+                it.poster = b;
+                int pos = row.items.indexOf(it);
+                if (pos >= 0 && row.adapter != null) row.adapter.notifyItemChanged(pos);
+            });
+        });
     }
 
     // ------------------------------------------------------------------ small helpers
 
     private String greeting() {
-        int h = Calendar.getInstance().get(Calendar.HOUR_OF_DAY);
+        int h = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY);
         String g = h < 5 ? "Good night" : h < 12 ? "Good morning" : h < 17 ? "Good afternoon"
                 : h < 22 ? "Good evening" : "Good night";
         return cfg.userName.isEmpty() ? g : g + ", " + cfg.userName;
-    }
-
-    private String wifiLabel() {
-        try {
-            ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-            Network n = cm.getActiveNetwork();
-            NetworkCapabilities nc = n == null ? null : cm.getNetworkCapabilities(n);
-            if (nc == null) return "Offline";
-            if (nc.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) return "Ethernet";
-            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-            WifiInfo wi = wm.getConnectionInfo();
-            String ssid = wi == null ? null : wi.getSSID();
-            if (ssid != null && !ssid.contains("unknown ssid") && !ssid.equals("0x")) {
-                if (ssid.length() > 2 && ssid.startsWith("\"") && ssid.endsWith("\"")) {
-                    ssid = ssid.substring(1, ssid.length() - 1);
-                }
-                return ssid;
-            }
-        } catch (Throwable ignored) {
-            // plain label
-        }
-        return "Wi-Fi";
     }
 
     private TextView text(String t, float px, int color, Typeface tf) {
@@ -1047,38 +1792,5 @@ public class MainActivity extends Activity {
         d.setColor(color);
         d.setCornerRadius(radius);
         return d;
-    }
-
-    /** A rounded 16:9 tile holding the banner (or icon). */
-    private FrameLayout makeCard() {
-        FrameLayout card = new FrameLayout(this);
-        card.setBackgroundColor(0xFF1C1C1E);
-        final float r = cfg.corner * s;
-        card.setOutlineProvider(new ViewOutlineProvider() {
-            @Override
-            public void getOutline(View view, Outline outline) {
-                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), r);
-            }
-        });
-        card.setClipToOutline(true);
-        card.setFocusable(false);
-        ImageView img = new ImageView(this);
-        card.addView(img, new FrameLayout.LayoutParams(-1, -1));
-        return card;
-    }
-
-    private void bindCard(FrameLayout card, AppEntry a) {
-        ImageView img = (ImageView) card.getChildAt(0);
-        Drawable b = a.banner(pm);
-        if (b != null) {
-            img.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            img.setPadding(0, 0, 0, 0);
-            img.setImageDrawable(b);
-        } else {
-            int p = Math.round(tileH * 0.16f);
-            img.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-            img.setPadding(p, p, p, p);
-            img.setImageDrawable(a.icon(pm));
-        }
     }
 }

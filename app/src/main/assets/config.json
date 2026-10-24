@@ -1,21 +1,76 @@
 {
+  "configVersion": 2,
+
   "name": "",
-  "showGreeting": true,
+  "showGreeting": false,
   "showDate": true,
   "clock24h": false,
 
   "dock": [
-    ["com.google.android.youtube.tv", "youtube"],
-    ["in.startv.hotstar.dplus.tv", "jiohotstar", "hotstar"],
-    ["com.netflix.ninja", "netflix"],
-    ["browsehere", "browse here"]
+    {
+      "match": ["netflix", "com.netflix.ninja"],
+      "taglines": [
+        "Just one more episode. Said every night, ever.",
+        "Stranger things have happened. Like finishing a season in one night.",
+        "Are you still watching? Always."
+      ]
+    },
+    {
+      "match": ["browsehere"],
+      "taglines": [
+        "The internet awaits. Mind the rabbit holes.",
+        "Ten tabs open, one brain cell.",
+        "Type less. Scroll more."
+      ]
+    },
+    {
+      "match": ["hotstar", "jiohotstar", "in.startv.hotstar.dplus.tv"],
+      "taglines": [
+        "IPL mode: ON. Chores: OFF.",
+        "Cricket is life. The rest is ad breaks.",
+        "Six! No wait, that was the volume."
+      ]
+    },
+    {
+      "type": "inputs",
+      "label": "Inputs",
+      "taglines": [
+        "Pick a port, any port.",
+        "Plug in. Zone out.",
+        "Every gadget, one click away."
+      ]
+    }
   ],
-  "showDockAppsInGrid": false,
-  "pinned": [],
+
+  "myShows": {
+    "enabled": true,
+    "title": "My Shows",
+    "watchNext": true,
+    "max": 10,
+    "items": []
+  },
+
+  "otherApps": {
+    "enabled": true,
+    "title": "Other Apps",
+    "moreApps": true,
+    "apps": [
+      ["jiotv", "jio tv"],
+      ["prime video", "com.amazon.amazonvideo.livingroom"],
+      ["kartoons"],
+      ["zee5"]
+    ]
+  },
+
+  "play": {
+    "enabled": true,
+    "title": "Play"
+  },
+
+  "columns": 5,
   "hidden": [],
   "rename": {},
 
-  "columns": 4,
   "background": "#000000",
   "glassColor": "#FFFFFF",
   "glassOpacity": 0.28,
