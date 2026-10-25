@@ -1,5 +1,5 @@
 {
-  "configVersion": 2,
+  "configVersion": 3,
 
   "name": "",
   "showGreeting": false,
@@ -46,8 +46,13 @@
     "enabled": true,
     "title": "My Shows",
     "watchNext": true,
-    "max": 10,
-    "items": []
+    "max": 4,
+    "items": [
+      { "title": "The Big Bang Theory", "app": "netflix" },
+      { "title": "The Mentalist", "app": "netflix" },
+      { "title": "How I Met Your Mother", "app": "hotstar" },
+      { "title": "The Flash", "app": "prime video" }
+    ]
   },
 
   "otherApps": {
@@ -55,10 +60,12 @@
     "title": "Other Apps",
     "moreApps": true,
     "apps": [
-      ["jiotv", "jio tv"],
+      ["jiotv", "jio tv", "com.jio.jioplay.tv"],
+      ["zee5", "com.graymatrix.did"],
+      ["spotify", "com.spotify.tv.android"],
+      ["@inputs"],
       ["prime video", "com.amazon.amazonvideo.livingroom"],
-      ["kartoons"],
-      ["zee5"]
+      ["kartoons"]
     ]
   },
 

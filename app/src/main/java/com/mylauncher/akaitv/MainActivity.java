@@ -69,7 +69,7 @@ public class MainActivity extends Activity {
     // ------------------------------------------------------------------ data
 
     static final class Item {
-        static final int APP = 0, SHOW = 1, MORE = 2, PLAY = 3, INPUT = 4, INPUTS_TILE = 5;
+        static final int APP = 0, SHOW = 1, MORE = 2, PLAY = 3, INPUT = 4, INPUTS_TILE = 5, PILL = 6;
         final int kind;
         AppEntry app;
         String title = "", sub = "", source = "", uri = "", pkg = "", posterRef = "";
@@ -87,7 +87,8 @@ public class MainActivity extends Activity {
     private static final class Row {
         String title = "";
         int top, cardW, cardH, cellH;
-        boolean labelBelow;
+        int cols = 1, gapAfter = -1, zoneTop = -1, focusY = -1;
+        boolean labelBelow, noTitle;
         final List<Item> items = new ArrayList<>();
         RecyclerView rv;
         MainActivity.CardAdapter adapter;
@@ -537,8 +538,9 @@ public class MainActivity extends Activity {
         if (cfg.showsEnabled) {
             Row r = new Row();
             r.title = cfg.showsTitle;
-            r.cardW = Math.round(W * 0.22f);
-            r.cardH = r.cardW * 9 / 16;
+            r.cols = 2;
+            r.cardW = (W - 2 * M) / 2 - G;
+            r.cardH = Math.round(r.cardW * 10f / 21f);
             r.labelBelow = false;
             for (Config.ShowSpec sp : cfg.shows) {
                 AppEntry a = sp.app.isEmpty() ? null : find(rawApps, sp.app);
@@ -554,6 +556,7 @@ public class MainActivity extends Activity {
             showsRow = r;
             rows.add(r);
         }
+        Row appsRow = null;
         if (cfg.otherEnabled) {
             Row r = new Row();
             r.title = cfg.otherTitle;
@@ -561,7 +564,15 @@ public class MainActivity extends Activity {
             r.cardH = tileH;
             r.labelBelow = true;
             Set<String> used = new HashSet<>();
+            Set<String> dockPk = new HashSet<>();
+            for (Item d : dockItems) if (!d.pkg.isEmpty()) dockPk.add(d.pkg);
             for (List<String> spec : cfg.otherApps) {
+                if (spec.size() == 1 && spec.get(0).trim().equalsIgnoreCase("@inputs")) {
+                    Item inp = new Item(Item.INPUTS_TILE);
+                    inp.title = "Inputs";
+                    r.items.add(inp);
+                    continue;
+                }
                 AppEntry a = null;
                 for (String m : spec) {
                     a = find(rawApps, m);
@@ -574,12 +585,51 @@ public class MainActivity extends Activity {
                 it.title = a.shown;
                 r.items.add(it);
             }
-            if (cfg.moreApps) {
-                Item more = new Item(Item.MORE);
-                more.title = "More apps";
-                r.items.add(more);
+            // keep the row looking full: if some apps are not installed, borrow other installed apps
+            if (r.items.size() < 4) {
+                List<AppEntry> cand = new ArrayList<>();
+                for (AppEntry a : rawApps) {
+                    String pk = a.pkg;
+                    if (dockPk.contains(pk) || pk.equals(getPackageName())) continue;
+                    if (used.contains(a.cn.flattenToShortString())) continue;
+                    if (pk.startsWith("com.android.") || pk.contains("launcher")
+                            || pk.contains("setupwraith") || pk.contains("tvrecommendations")) continue;
+                    cand.add(a);
+                }
+                java.util.Collections.sort(cand, (x, y) -> {
+                    int bx = x.ai.banner != 0 ? 0 : 1, by = y.ai.banner != 0 ? 0 : 1;
+                    if (bx != by) return bx - by;
+                    return x.label.compareToIgnoreCase(y.label);
+                });
+                for (AppEntry a : cand) {
+                    if (r.items.size() >= 4) break;
+                    Item it = new Item(Item.APP);
+                    it.app = a;
+                    it.pkg = a.pkg;
+                    it.title = a.shown;
+                    r.items.add(it);
+                }
             }
-            if (!r.items.isEmpty()) rows.add(r);
+            if (!r.items.isEmpty()) {
+                r.gapAfter = cfg.moreApps ? Math.round(14 * s) : -1;
+                r.focusY = Math.round(420 * s);
+                rows.add(r);
+                appsRow = r;
+            }
+        }
+        if (cfg.moreApps) {
+            Row r = new Row();
+            r.noTitle = true;
+            r.cardW = Math.round(W * 0.14f);
+            r.cardH = Math.round(64 * s);
+            r.labelBelow = false;
+            Item more = new Item(Item.PILL);
+            more.title = "More apps";
+            r.items.add(more);
+            if (appsRow != null) {
+                r.zoneTop = -2; // follows the Other Apps row
+            }
+            rows.add(r);
         }
         if (cfg.playEnabled) {
             Row r = new Row();
@@ -592,10 +642,24 @@ public class MainActivity extends Activity {
             r.items.add(play);
             rows.add(r);
         }
+        Row prevRow = null;
         for (Row r : rows) {
-            r.cellH = r.cardH + (r.labelBelow ? labelGap + labelH : 0);
+            r.cellH = r.cols > 1 ? r.cols * r.cardH + G
+                    : r.cardH + (r.labelBelow ? labelGap + labelH : 0);
             r.top = y;
-            y += rowTitleH + rowGapTitle + r.cellH + gapRow;
+            int tH = r.noTitle ? 0 : rowTitleH + rowGapTitle;
+            if (r.zoneTop == -2 && prevRow != null) {
+                r.zoneTop = prevRow.zoneTop;
+                r.focusY = prevRow.focusY;
+            } else if (r.cols > 1) {
+                r.zoneTop = y + tH; // the title scrolls away, like on Apple TV
+                r.focusY = Math.round(40 * s);
+            } else {
+                r.zoneTop = y;
+                if (r.focusY < 0) r.focusY = rowFocusY;
+            }
+            y += tH + r.cellH + (r.gapAfter >= 0 ? r.gapAfter : gapRow);
+            prevRow = r;
         }
         pageH = Math.max(H, y + Math.round(60 * s));
     }
@@ -763,14 +827,17 @@ public class MainActivity extends Activity {
     private void buildRowViews() {
         for (int r = 0; r < rows.size(); r++) {
             final Row row = rows.get(r);
-            TextView title = text(row.title, 30 * s, 0xCCFFFFFF, tfLight);
-            FrameLayout.LayoutParams tl = new FrameLayout.LayoutParams(-2, rowTitleH);
-            tl.leftMargin = M;
-            tl.topMargin = row.top;
-            page.addView(title, tl);
+            if (!row.noTitle) {
+                TextView title = text(row.title, 30 * s, 0xCCFFFFFF, tfLight);
+                FrameLayout.LayoutParams tl = new FrameLayout.LayoutParams(-2, rowTitleH);
+                tl.leftMargin = M;
+                tl.topMargin = row.top;
+                page.addView(title, tl);
+            }
 
             RecyclerView rv = new RecyclerView(this);
-            rv.setLayoutManager(new LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false));
+            if (row.cols > 1) rv.setLayoutManager(new GridLayoutManager(this, row.cols));
+            else rv.setLayoutManager(new LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false));
             rv.setClipChildren(false);
             rv.setClipToPadding(false);
             rv.setPadding(M, rowVpad, M, rowVpad);
@@ -778,6 +845,7 @@ public class MainActivity extends Activity {
             rv.setOverScrollMode(View.OVER_SCROLL_NEVER);
             rv.setFocusable(false);
             CardAdapter ad = new CardAdapter(row.items, OWN_ROW, r, row.cardW, row.cardH, row.labelBelow);
+            ad.vGap = row.cols > 1 ? G : 0;
             row.adapter = ad;
             row.rv = rv;
             rv.setAdapter(ad);
@@ -787,8 +855,9 @@ public class MainActivity extends Activity {
                     glassFollow(v, pageGlass, page);
                 }
             });
-            FrameLayout.LayoutParams rl = new FrameLayout.LayoutParams(W, row.cellH + 2 * rowVpad);
-            rl.topMargin = row.top + rowTitleH + rowGapTitle - rowVpad;
+            FrameLayout.LayoutParams rl = new FrameLayout.LayoutParams(W,
+                    row.cellH + (row.cols > 1 ? G : 0) + 2 * rowVpad);
+            rl.topMargin = row.top + (row.noTitle ? 0 : rowTitleH + rowGapTitle) - rowVpad;
             page.addView(rv, rl);
         }
     }
@@ -839,8 +908,13 @@ public class MainActivity extends Activity {
             over2 = text("", 28 * s, 0xFFFFFFFF, tfRegular);
             over2.setSingleLine(true);
             over2.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            over.addView(over1);
-            over.addView(over2);
+            if (kind == Item.SHOW) {
+                over.addView(over2);
+                over.addView(over1);
+            } else {
+                over.addView(over1);
+                over.addView(over2);
+            }
             card.addView(over, new FrameLayout.LayoutParams(-1, -1));
             label = text("", 24 * s, 0xFFFFFFFF, tfLight);
             label.setGravity(Gravity.CENTER);
@@ -894,6 +968,18 @@ public class MainActivity extends Activity {
                     }
                     break;
                 }
+                case Item.PILL:
+                    img.setVisibility(View.GONE);
+                    art.setVisibility(View.GONE);
+                    scrim.setVisibility(View.GONE);
+                    card.setBackgroundColor(0x40FFFFFF);
+                    over.setVisibility(View.VISIBLE);
+                    over.setGravity(Gravity.CENTER);
+                    over.setPadding(0, 0, 0, 0);
+                    over1.setVisibility(View.GONE);
+                    over2.setText(it.title);
+                    over2.setTextSize(TypedValue.COMPLEX_UNIT_PX, 26 * s);
+                    break;
                 case Item.MORE:
                     img.setVisibility(View.GONE);
                     scrim.setVisibility(View.GONE);
@@ -949,6 +1035,7 @@ public class MainActivity extends Activity {
         final List<Item> items;
         final int owner, idx, cw, ch;
         final boolean labelBelow;
+        int vGap;
 
         CardAdapter(List<Item> items, int owner, int idx, int cw, int ch, boolean labelBelow) {
             this.items = items;
@@ -971,6 +1058,7 @@ public class MainActivity extends Activity {
             RecyclerView.LayoutParams lp = new RecyclerView.LayoutParams(cw, cellH);
             lp.rightMargin = G;
             if (owner == OWN_GRID) lp.bottomMargin = Math.round(18 * s);
+            else if (vGap > 0) lp.bottomMargin = vGap;
             cv.cell.setLayoutParams(lp);
             final CardHolder h = new CardHolder(cv);
             wire(cv, owner, idx, new PosSource() {
@@ -1099,22 +1187,28 @@ public class MainActivity extends Activity {
                 else if (key == KeyEvent.KEYCODE_DPAD_UP && !iconViews.isEmpty()) {
                     iconViews.get(iconViews.size() - 1).requestFocus();
                 } else if (key == KeyEvent.KEYCODE_DPAD_DOWN && !rows.isEmpty()) {
-                    focusRow(0, Math.min(pos, rows.get(0).items.size() - 1));
+                    focusRow(0, entryPos(0, pos, false));
                 }
                 return true;
             }
             case OWN_ROW: {
                 Row row = rows.get(idx);
                 int n = row.items.size();
+                int c = row.cols;
                 if (key == KeyEvent.KEYCODE_DPAD_LEFT) {
-                    if (pos > 0) focusRow(idx, pos - 1);
+                    if (pos % c > 0) focusRow(idx, pos - 1);
                 } else if (key == KeyEvent.KEYCODE_DPAD_RIGHT) {
-                    if (pos < n - 1) focusRow(idx, pos + 1);
+                    if (pos % c < c - 1 && pos + 1 < n) focusRow(idx, pos + 1);
                 } else if (key == KeyEvent.KEYCODE_DPAD_UP) {
-                    if (idx > 0) focusRow(idx - 1, Math.min(pos, rows.get(idx - 1).items.size() - 1));
-                    else focusDock(Math.min(pos, dockViews.size() - 1));
-                } else if (idx < rows.size() - 1) {
-                    focusRow(idx + 1, Math.min(pos, rows.get(idx + 1).items.size() - 1));
+                    if (c > 1 && pos >= c) focusRow(idx, pos - c);
+                    else if (idx > 0) focusRow(idx - 1, entryPos(idx - 1, mapX(row, pos), true));
+                    else focusDock(Math.min(mapX(row, pos), dockViews.size() - 1));
+                } else {
+                    if (c > 1 && pos + c < n) focusRow(idx, pos + c);
+                    else if (c > 1 && pos / c < (n - 1) / c) focusRow(idx, n - 1);
+                    else if (idx < rows.size() - 1) {
+                        focusRow(idx + 1, entryPos(idx + 1, mapX(row, pos), false));
+                    }
                 }
                 return true;
             }
@@ -1142,6 +1236,24 @@ public class MainActivity extends Activity {
                 return true;
             }
         }
+    }
+
+    /** A rough left-to-right position, so moving between rows of different shapes feels natural. */
+    private static int mapX(Row from, int pos) {
+        return from.cols > 1 ? (pos % from.cols) * 2 : pos;
+    }
+
+    /** Which item to land on when entering row r from above or below. */
+    private int entryPos(int r, int x, boolean fromBelow) {
+        Row row = rows.get(r);
+        int n = row.items.size();
+        if (n == 0) return 0;
+        if (row.cols > 1) {
+            int col = x < 2 ? 0 : row.cols - 1;
+            int base = fromBelow ? ((n - 1) / row.cols) * row.cols : 0;
+            return Math.min(base + col, n - 1);
+        }
+        return Math.min(x, n - 1);
     }
 
     private void focusDock(int i) {
@@ -1204,7 +1316,11 @@ public class MainActivity extends Activity {
     private void setZone(int z) {
         if (z == zone || page == null) return;
         zone = z;
-        float ty = (z >= 0 && z < rows.size()) ? -(rows.get(z).top - rowFocusY) : 0f;
+        float ty = 0f;
+        if (z >= 0 && z < rows.size()) {
+            Row zr = rows.get(z);
+            ty = -(zr.zoneTop - zr.focusY);
+        }
         page.animate().translationY(ty).setDuration(320).setInterpolator(new DecelerateInterpolator()).start();
     }
 
@@ -1427,6 +1543,7 @@ public class MainActivity extends Activity {
                 openShow(it);
                 break;
             case Item.MORE:
+            case Item.PILL:
                 openApps();
                 break;
             case Item.PLAY:

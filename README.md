@@ -1,6 +1,6 @@
 # Akai TV launcher v2
 
-Black home screen with a big thin clock, a funny tagline that changes with the tile you focus, a
+Black home screen (v2.1: My Shows is a 2x2 grid of big cards, Other Apps is one row with a separate "More apps" pill) with a big thin clock, a funny tagline that changes with the tile you focus, a
 dock (Netflix, BrowseHere, JioHotstar, Inputs), and rows that slide up when you press Down:
 **My Shows**, **Other Apps** (with **More apps**) and **Play** (a small game).
 Everything is drawn in code. Nothing is rooted and nothing is deleted.
