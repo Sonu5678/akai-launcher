@@ -1,5 +1,5 @@
 {
-  "configVersion": 4,
+  "configVersion": 5,
 
   "name": "",
   "showGreeting": false,
@@ -60,12 +60,13 @@
     "title": "Other Apps",
     "moreApps": true,
     "apps": [
-      ["jiotv", "jio tv", "com.jio.jioplay.tv"],
+      ["com.jio.media.jiotvplus", "jiotv", "jio tv"],
       ["zee5", "com.graymatrix.did"],
-      ["spotify", "com.spotify.tv.android"],
+      ["com.google.android.youtube.tv", "youtube"],
+      ["com.spotify.tv.android", "spotify"],
       ["@inputs"],
-      ["prime video", "com.amazon.amazonvideo.livingroom"],
-      ["kartoons"]
+      ["com.amazon.amazonvideo.livingroom", "prime video"],
+      ["com.kartoons.app", "kartoons"]
     ]
   },
 

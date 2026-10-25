@@ -12,7 +12,8 @@ import android.view.View;
 /** Tiles and icons drawn in code, so the launcher needs no image files. */
 final class ArtView extends View {
     static final int INPUT_TILE = 0, MORE = 1, PLAY = 2, WIFI = 3, GEAR = 4, HDMI = 5, AV = 6,
-            LIVE = 7, OTHER = 8;
+            LIVE = 7, OTHER = 8, SOUND = 9, DISPLAY = 10, BT = 11, WIFI_TILE = 12,
+            GEAR_TILE = 13, APPS_TILE = 14;
 
     private int kind;
     private boolean connected;
@@ -24,6 +25,7 @@ final class ArtView extends View {
     private Shader bg;
     private int bgW = -1, bgH = -1, bgKind = -1;
     private Skyline skyline;
+    private int holeColor = 0xFF2b2b30;
 
     ArtView(Context c, int kind) {
         super(c);
@@ -49,10 +51,11 @@ final class ArtView extends View {
                 drawPlay(c, w, h);
                 return;
             case WIFI:
-                drawWifi(c, w, h);
+                drawWifiGlyph(c, w / 2f, h * 0.62f, Math.min(w, h));
                 return;
             case GEAR:
-                drawGear(c, w, h);
+                holeColor = 0xFF2b2b30;
+                drawGearGlyph(c, w / 2f, h / 2f, Math.min(w, h));
                 return;
             default:
                 break;
@@ -100,6 +103,25 @@ final class ArtView extends View {
                 break;
             case MORE:
                 drawMore(c, cx, cy, s);
+                break;
+            case SOUND:
+                drawSound(c, cx, cy, s);
+                break;
+            case DISPLAY:
+                drawDisplay(c, cx, cy, s);
+                break;
+            case BT:
+                drawBt(c, cx, cy, s);
+                break;
+            case WIFI_TILE:
+                drawWifiGlyph(c, cx, cy + s * 0.22f, s * 1.1f);
+                break;
+            case GEAR_TILE:
+                holeColor = 0xFF1d2740;
+                drawGearGlyph(c, cx, cy, s * 1.25f);
+                break;
+            case APPS_TILE:
+                drawMore(c, cx, cy, s * 0.8f);
                 break;
             default:
                 drawOther(c, cx, cy, s);
@@ -179,9 +201,7 @@ final class ArtView extends View {
         }
     }
 
-    private void drawWifi(Canvas c, float w, float h) {
-        float s = Math.min(w, h);
-        float cx = w / 2f, cy = h * 0.62f;
+    private void drawWifiGlyph(Canvas c, float cx, float cy, float s) {
         line.setColor(0xFFFFFFFF);
         line.setStrokeWidth(s * 0.075f);
         for (int i = 1; i <= 3; i++) {
@@ -193,9 +213,7 @@ final class ArtView extends View {
         c.drawCircle(cx, cy, s * 0.055f, fill);
     }
 
-    private void drawGear(Canvas c, float w, float h) {
-        float s = Math.min(w, h);
-        float cx = w / 2f, cy = h / 2f;
+    private void drawGearGlyph(Canvas c, float cx, float cy, float s) {
         fill.setColor(0xFFFFFFFF);
         c.drawCircle(cx, cy, s * 0.24f, fill);
         for (int i = 0; i < 8; i++) {
@@ -205,9 +223,53 @@ final class ArtView extends View {
             c.drawRoundRect(rf, s * 0.02f, s * 0.02f, fill);
             c.restore();
         }
-        // hole: paint it with the button's own dark colour
-        fill.setColor(0xFF2b2b30);
+        // hole: paint it with the background's own colour
+        fill.setColor(holeColor);
         c.drawCircle(cx, cy, s * 0.1f, fill);
+    }
+
+    private void drawSound(Canvas c, float cx, float cy, float s) {
+        line.setColor(0xFFFFFFFF);
+        line.setStrokeWidth(s * 0.06f);
+        float l = cx - s * 0.5f;
+        path.reset();
+        path.moveTo(l, cy - s * 0.14f);
+        path.lineTo(l + s * 0.2f, cy - s * 0.14f);
+        path.lineTo(l + s * 0.5f, cy - s * 0.34f);
+        path.lineTo(l + s * 0.5f, cy + s * 0.34f);
+        path.lineTo(l + s * 0.2f, cy + s * 0.14f);
+        path.lineTo(l, cy + s * 0.14f);
+        path.close();
+        c.drawPath(path, line);
+        for (int i = 1; i <= 2; i++) {
+            float r = s * 0.2f * i;
+            rf.set(cx - r, cy - r, cx + r, cy + r);
+            c.drawArc(rf, -45f, 90f, false, line);
+        }
+    }
+
+    private void drawDisplay(Canvas c, float cx, float cy, float s) {
+        line.setColor(0xFFFFFFFF);
+        line.setStrokeWidth(s * 0.06f);
+        rf.set(cx - s * 0.5f, cy - s * 0.32f, cx + s * 0.5f, cy + s * 0.22f);
+        c.drawRoundRect(rf, s * 0.07f, s * 0.07f, line);
+        c.drawLine(cx - s * 0.2f, cy + s * 0.36f, cx + s * 0.2f, cy + s * 0.36f, line);
+        c.drawLine(cx, cy + s * 0.22f, cx, cy + s * 0.36f, line);
+        fill.setColor(0xFFFFFFFF);
+        c.drawCircle(cx, cy - s * 0.05f, s * 0.09f, fill);
+    }
+
+    private void drawBt(Canvas c, float cx, float cy, float s) {
+        line.setColor(0xFFFFFFFF);
+        line.setStrokeWidth(s * 0.06f);
+        path.reset();
+        path.moveTo(cx - s * 0.25f, cy - s * 0.2f);
+        path.lineTo(cx + s * 0.25f, cy + s * 0.2f);
+        path.lineTo(cx, cy + s * 0.4f);
+        path.lineTo(cx, cy - s * 0.4f);
+        path.lineTo(cx + s * 0.25f, cy - s * 0.2f);
+        path.lineTo(cx - s * 0.25f, cy + s * 0.2f);
+        c.drawPath(path, line);
     }
 
     private void drawPlay(Canvas c, float w, float h) {

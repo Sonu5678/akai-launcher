@@ -2,6 +2,7 @@ package com.mylauncher.akaitv;
 
 import android.content.Context;
 import android.graphics.Color;
+import android.util.Log;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -118,6 +119,9 @@ final class Config {
                 }
             }
             cfg.parse(text);
+            Log.i("AkaiLauncher", "config v" + cfg.configVersion + " from "
+                    + (best == null ? "built-in" : best.getPath()) + ", otherApps=" + cfg.otherApps.size()
+                    + ", maxShows=" + cfg.maxShows);
             return cfg;
         } catch (Exception e) {
             Config fb = new Config();

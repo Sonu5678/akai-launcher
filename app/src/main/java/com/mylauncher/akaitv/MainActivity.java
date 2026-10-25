@@ -25,6 +25,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.util.DisplayMetrics;
+import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
@@ -74,7 +75,7 @@ public class MainActivity extends Activity {
         AppEntry app;
         String title = "", sub = "", source = "", uri = "", pkg = "", posterRef = "";
         Bitmap poster;
-        String inputId = "";
+        String inputId = "", action = "";
         boolean passthrough, connected, placeholder;
         int artKind = ArtView.OTHER;
         int glow = 0xFF3A3A3C;
@@ -110,6 +111,8 @@ public class MainActivity extends Activity {
     private String sig = "";
     private int gen;
     private boolean safe;
+    private boolean settingsPanel;
+    private static final String TAG = "AkaiLauncher";
 
     private FrameLayout root, page;
     private GlassView pageGlass;
@@ -220,6 +223,16 @@ public class MainActivity extends Activity {
     /** If a remote button arrives while nothing is focused, focus first and swallow the press. */
     @Override
     public boolean dispatchKeyEvent(KeyEvent e) {
+        if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
+            Log.i(TAG, "key " + KeyEvent.keyCodeToString(e.getKeyCode()));
+        }
+        if (!safe && gameView == null && e.getKeyCode() == KeyEvent.KEYCODE_SETTINGS) {
+            if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
+                if (settingsPanel) closeOverlays(true);
+                else openSettingsPanel();
+            }
+            return true;
+        }
         if (!safe && gameView == null && e.getAction() == KeyEvent.ACTION_DOWN
                 && getCurrentFocus() == null) {
             switch (e.getKeyCode()) {
@@ -430,6 +443,7 @@ public class MainActivity extends Activity {
         inputsLayer = null;
         inputsRv = null;
         inputsGlass = null;
+        settingsPanel = false;
         appsLayer = null;
         appsRv = null;
         appsGlass = null;
@@ -467,6 +481,8 @@ public class MainActivity extends Activity {
 
     private void addWallpaper() {
         File wf = cfg.find(cfg.wallpaper);
+        Log.i(TAG, "wallpaper name=" + cfg.wallpaper + " file="
+                + (wf == null ? "none" : wf.getPath() + " " + wf.length() + " bytes"));
         if (wf != null) {
             try {
                 BitmapFactory.Options o = new BitmapFactory.Options();
@@ -477,7 +493,13 @@ public class MainActivity extends Activity {
                 o.inJustDecodeBounds = false;
                 o.inSampleSize = sample;
                 Bitmap bmp = BitmapFactory.decodeFile(wf.getPath(), o);
+                if (bmp == null) {
+                    Log.w(TAG, "wallpaper could not be decoded");
+                    Toast.makeText(this, "Wallpaper file can't be read. Use a JPG or PNG picture.",
+                            Toast.LENGTH_LONG).show();
+                }
                 if (bmp != null) {
+                    Log.i(TAG, "wallpaper loaded " + bmp.getWidth() + "x" + bmp.getHeight());
                     ImageView iv = new ImageView(this);
                     iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
                     iv.setImageBitmap(bmp);
@@ -487,8 +509,8 @@ public class MainActivity extends Activity {
                     root.addView(scrim, new FrameLayout.LayoutParams(-1, -1));
                     return;
                 }
-            } catch (Throwable ignored) {
-                // fall through to the built-in backdrop
+            } catch (Throwable ex) {
+                Log.w(TAG, "wallpaper error " + ex);
             }
         }
         if (cfg.background == 0xFF000000) {
@@ -788,8 +810,10 @@ public class MainActivity extends Activity {
                         return false;
                 }
             });
-            v.setOnClickListener(view -> openSettingsScreen(idx == 0
-                    ? Settings.ACTION_WIFI_SETTINGS : Settings.ACTION_SETTINGS));
+            v.setOnClickListener(view -> {
+                if (idx == 0) openSettingsScreen(Settings.ACTION_WIFI_SETTINGS);
+                else openSettingsPanel();
+            });
         }
     }
 
@@ -1558,7 +1582,12 @@ public class MainActivity extends Activity {
                 openGame();
                 break;
             case Item.INPUT:
-                startInput(it);
+                if (!it.action.isEmpty()) {
+                    closeOverlays(false);
+                    openSettingsScreen(it.action);
+                } else {
+                    startInput(it);
+                }
                 break;
             case Item.INPUTS_TILE:
                 openInputs();
@@ -1673,6 +1702,28 @@ public class MainActivity extends Activity {
         return out;
     }
 
+    private void openSettingsPanel() {
+        closeOverlays(false);
+        inputItems.clear();
+        inputItems.add(settingsItem("Wi-Fi", "NETWORK", ArtView.WIFI_TILE, Settings.ACTION_WIFI_SETTINGS));
+        inputItems.add(settingsItem("Display", "SCREEN", ArtView.DISPLAY, Settings.ACTION_DISPLAY_SETTINGS));
+        inputItems.add(settingsItem("Sound", "AUDIO", ArtView.SOUND, Settings.ACTION_SOUND_SETTINGS));
+        inputItems.add(settingsItem("Bluetooth", "REMOTES", ArtView.BT, Settings.ACTION_BLUETOOTH_SETTINGS));
+        inputItems.add(settingsItem("Apps", "MANAGE", ArtView.APPS_TILE, Settings.ACTION_APPLICATION_SETTINGS));
+        inputItems.add(settingsItem("All settings", "SYSTEM", ArtView.GEAR_TILE, Settings.ACTION_SETTINGS));
+        showPanel("Settings", "Quick settings", 0.125f);
+        settingsPanel = true;
+    }
+
+    private Item settingsItem(String title, String sub, int art, String action) {
+        Item it = new Item(Item.INPUT);
+        it.title = title;
+        it.sub = sub;
+        it.artKind = art;
+        it.action = action;
+        return it;
+    }
+
     private void openInputs() {
         closeOverlays(false);
         inputItems.clear();
@@ -1684,21 +1735,26 @@ public class MainActivity extends Activity {
             none.artKind = ArtView.OTHER;
             inputItems.add(none);
         }
+        showPanel("Inputs", "Choose what to watch", 0.155f);
+    }
+
+    /** The full-screen row of big cards shared by Inputs and Settings (items are in inputItems). */
+    private void showPanel(String heading, String sub, float cardFrac) {
         FrameLayout layer = new FrameLayout(this);
         layer.setBackgroundColor(0xE6000000);
 
-        TextView title = text("Inputs", 72 * s, 0xFFFFFFFF, tfThin);
+        TextView title = text(heading, 72 * s, 0xFFFFFFFF, tfThin);
         FrameLayout.LayoutParams tl = new FrameLayout.LayoutParams(-2, -2);
         tl.leftMargin = M;
         tl.topMargin = Math.round(H * 0.2f);
         layer.addView(title, tl);
-        TextView hint = text("Choose what to watch", 28 * s, 0x99FFFFFF, tfLight);
+        TextView hint = text(sub, 28 * s, 0x99FFFFFF, tfLight);
         FrameLayout.LayoutParams hl = new FrameLayout.LayoutParams(-2, -2);
         hl.leftMargin = M;
         hl.topMargin = Math.round(H * 0.2f + 92 * s);
         layer.addView(hint, hl);
 
-        int cw = Math.round(W * 0.155f);
+        int cw = Math.round(W * cardFrac);
         int ch = Math.round(cw * 0.8f);
         int vpad = Math.round(24 * s);
         RecyclerView rv = new RecyclerView(this);
@@ -1789,6 +1845,7 @@ public class MainActivity extends Activity {
 
     private void closeOverlays(boolean refocus) {
         boolean any = inputsLayer != null || appsLayer != null;
+        settingsPanel = false;
         if (inputsLayer != null) {
             root.removeView(inputsLayer);
             inputsLayer = null;
