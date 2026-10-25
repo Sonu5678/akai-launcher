@@ -113,6 +113,8 @@ public class MainActivity extends Activity {
     private boolean safe;
     private boolean settingsPanel;
     private static final String TAG = "AkaiLauncher";
+    static final String ACTION_SETTINGS_PANEL = "com.mylauncher.akaitv.SETTINGS_PANEL";
+    private boolean fg;
 
     private FrameLayout root, page;
     private GlassView pageGlass;
@@ -163,6 +165,10 @@ public class MainActivity extends Activity {
         root.setClipChildren(false);
         setContentView(root);
         startUi();
+        Intent first = getIntent();
+        if (!safe && first != null && ACTION_SETTINGS_PANEL.equals(first.getAction())) {
+            root.post(this::openSettingsPanel);
+        }
     }
 
     @Override
@@ -173,8 +179,15 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onPause() {
+        fg = false;
+        super.onPause();
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
+        fg = true;
         if (safe) return;
         refreshIfChanged();
     }
@@ -199,6 +212,18 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         if (safe) return;
+        if (intent != null && ACTION_SETTINGS_PANEL.equals(intent.getAction())) {
+            boolean wasOpenOnScreen = fg && settingsPanel;
+            closeGame(false);
+            if (wasOpenOnScreen) {
+                closeOverlays(true);
+            } else if (root != null) {
+                root.post(() -> {
+                    if (!safe && gameView == null) openSettingsPanel();
+                });
+            }
+            return;
+        }
         refreshIfChanged();
         if (intent != null && intent.hasCategory(Intent.CATEGORY_HOME)) {
             closeGame(false);

@@ -19,6 +19,9 @@ STOCK_ACT="com.google.android.apps.tv.launcherx/.home.HomeActivity"
 [ -s "$BK/stock-home.txt" ] && STOCK_ACT="$(cat "$BK/stock-home.txt")"
 STOCK_PKG="${STOCK_ACT%%/*}"
 
+echo "Switching the Settings-button helper off..."
+bash "$(dirname "$0")/disable-settings-key.sh" "$ADDR" >/dev/null 2>&1 || true
+
 echo "Re-enabling what was switched off..."
 if [ -f "$BK/disabled-by-me.txt" ]; then
   sort -u "$BK/disabled-by-me.txt" | while read -r P; do

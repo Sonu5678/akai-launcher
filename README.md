@@ -59,7 +59,7 @@ is broken the launcher shows an error and uses its built-in defaults, it never c
 | `glassColor`, `glassOpacity`, `focusScale`, `cornerRadius` | Look |
 
 **Wallpaper**: `bash scripts/config-push.sh <tv> /path/to/wallpaper.jpg` (1920x1080 works best). The push prints what the launcher says about it.
-**Settings button**: the remote's Settings button (and the gear icon) opens a quick panel: Wi-Fi, Display, Sound, Bluetooth, Apps, All settings. It works while the Akai screen is showing.
+**Settings button**: the remote's Settings button (and the gear icon) opens a quick panel: Wi-Fi, Display, Sound, Bluetooth, Apps, All settings. To make the button work from every screen (the TV otherwise ignores it): `bash scripts/enable-settings-key.sh <tv>`. Undo with `bash scripts/disable-settings-key.sh <tv>` (restore-original does this too).
 **Font**: push a `font.ttf` the same way.
 **Find a package name**: long-press OK on any app in All apps.
 
