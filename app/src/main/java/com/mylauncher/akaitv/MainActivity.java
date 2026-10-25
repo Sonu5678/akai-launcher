@@ -596,10 +596,10 @@ public class MainActivity extends Activity {
                             || pk.contains("setupwraith") || pk.contains("tvrecommendations")) continue;
                     cand.add(a);
                 }
-                java.util.Collections.sort(cand, (x, y) -> {
-                    int bx = x.ai.banner != 0 ? 0 : 1, by = y.ai.banner != 0 ? 0 : 1;
-                    if (bx != by) return bx - by;
-                    return x.label.compareToIgnoreCase(y.label);
+                java.util.Collections.sort(cand, (ea, eb) -> {
+                    int ba = ea.ai.banner != 0 ? 0 : 1, bb = eb.ai.banner != 0 ? 0 : 1;
+                    if (ba != bb) return ba - bb;
+                    return ea.label.compareToIgnoreCase(eb.label);
                 });
                 for (AppEntry a : cand) {
                     if (r.items.size() >= 4) break;
