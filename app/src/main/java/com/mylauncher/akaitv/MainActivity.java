@@ -173,6 +173,11 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (safe) return;
+        refreshIfChanged();
+    }
+
+    /** Reloads the screen if the settings, wallpaper or installed apps changed. */
+    private void refreshIfChanged() {
         boolean rebuild = false;
         try {
             if (cfg == null || cfg.stamp() != cfgStamp) rebuild = true;
@@ -191,6 +196,7 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         if (safe) return;
+        refreshIfChanged();
         if (intent != null && intent.hasCategory(Intent.CATEGORY_HOME)) {
             closeGame(false);
             closeOverlays(false);
