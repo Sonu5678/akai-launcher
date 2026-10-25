@@ -21,7 +21,11 @@ for SRC in "$@"; do
   OK=0
   if a push "$SRC" "$EXT/$NAME" >/dev/null 2>&1; then
     GOT="$(a shell stat -c%s "$EXT/$NAME" 2>/dev/null | tr -d '\r')"
-    if [ "$GOT" = "$WANT" ]; then echo "pushed $NAME"; OK=1; fi
+    if [ "$GOT" = "$WANT" ]; then
+      a shell touch "$EXT/$NAME" >/dev/null 2>&1
+      case "$NAME" in config.json) a shell "run-as $PKG rm -f files/config.json" >/dev/null 2>&1 ;; esac
+      echo "pushed $NAME"; OK=1
+    fi
   fi
   if [ $OK -eq 0 ]; then
     # fallback: the app's private folder (works because this build is debuggable)

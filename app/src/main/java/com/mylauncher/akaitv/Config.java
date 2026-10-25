@@ -93,6 +93,29 @@ final class Config {
                 }
             } else {
                 text = new String(readAll(new FileInputStream(best)), "UTF-8");
+                // a newer built-in config replaces an older saved one (the old one is kept as a backup)
+                String assetText = readAsset(c);
+                int av = versionOf(assetText), fv = versionOf(text);
+                if (fv >= 0 && av > fv) {
+                    try {
+                        File dir = best.getParentFile();
+                        FileOutputStream b = new FileOutputStream(new File(dir, "config.backup.json"));
+                        b.write(text.getBytes("UTF-8"));
+                        b.close();
+                    } catch (Exception ignored) {
+                        // backup is best effort
+                    }
+                    for (File d : cfg.dirs) {
+                        try {
+                            FileOutputStream o = new FileOutputStream(new File(d, FILE));
+                            o.write(assetText.getBytes("UTF-8"));
+                            o.close();
+                        } catch (Exception ignored) {
+                            // keep going
+                        }
+                    }
+                    text = assetText;
+                }
             }
             cfg.parse(text);
             return cfg;
@@ -106,6 +129,15 @@ final class Config {
             }
             fb.error = "config.json: " + e.getMessage();
             return fb;
+        }
+    }
+
+    /** The configVersion of a config text, or -1 if it cannot be read. */
+    private static int versionOf(String text) {
+        try {
+            return new JSONObject(text).optInt("configVersion", 0);
+        } catch (Exception e) {
+            return -1;
         }
     }
 

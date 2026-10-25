@@ -543,6 +543,7 @@ public class MainActivity extends Activity {
             r.cardH = Math.round(r.cardW * 10f / 21f);
             r.labelBelow = false;
             for (Config.ShowSpec sp : cfg.shows) {
+                if (r.items.size() >= 4) break;
                 AppEntry a = sp.app.isEmpty() ? null : find(rawApps, sp.app);
                 Item it = new Item(Item.SHOW);
                 it.title = sp.title;
@@ -838,7 +839,7 @@ public class MainActivity extends Activity {
             RecyclerView rv = new RecyclerView(this);
             if (row.cols > 1) rv.setLayoutManager(new GridLayoutManager(this, row.cols));
             else rv.setLayoutManager(new LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false));
-            rv.setClipChildren(false);
+            rv.setClipChildren(row.cols > 1); // the show grid must never draw over the rows below
             rv.setClipToPadding(false);
             rv.setPadding(M, rowVpad, M, rowVpad);
             rv.setItemAnimator(null);
@@ -978,6 +979,7 @@ public class MainActivity extends Activity {
                     over.setPadding(0, 0, 0, 0);
                     over1.setVisibility(View.GONE);
                     over2.setText(it.title);
+                    over2.setGravity(Gravity.CENTER);
                     over2.setTextSize(TypedValue.COMPLEX_UNIT_PX, 26 * s);
                     break;
                 case Item.MORE:
@@ -1196,9 +1198,9 @@ public class MainActivity extends Activity {
                 int n = row.items.size();
                 int c = row.cols;
                 if (key == KeyEvent.KEYCODE_DPAD_LEFT) {
-                    if (pos % c > 0) focusRow(idx, pos - 1);
+                    if (c > 1 ? pos % c > 0 : pos > 0) focusRow(idx, pos - 1);
                 } else if (key == KeyEvent.KEYCODE_DPAD_RIGHT) {
-                    if (pos % c < c - 1 && pos + 1 < n) focusRow(idx, pos + 1);
+                    if (c > 1 ? (pos % c < c - 1 && pos + 1 < n) : pos < n - 1) focusRow(idx, pos + 1);
                 } else if (key == KeyEvent.KEYCODE_DPAD_UP) {
                     if (c > 1 && pos >= c) focusRow(idx, pos - c);
                     else if (idx > 0) focusRow(idx - 1, entryPos(idx - 1, mapX(row, pos), true));
@@ -1846,7 +1848,7 @@ public class MainActivity extends Activity {
         List<Item> merged = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (WatchNext.Program p : progs) {
-            if (merged.size() >= cfg.maxShows) break;
+            if (merged.size() >= Math.min(cfg.maxShows, 4)) break;
             AppEntry a = findPkg(p.pkg);
             if (a == null) continue;
             if (!seen.add(p.title.toLowerCase(Locale.ROOT))) continue;
@@ -1860,7 +1862,7 @@ public class MainActivity extends Activity {
         }
         if (merged.isEmpty()) return; // keep whatever is shown now
         for (Item it : row.items) {
-            if (it.placeholder || merged.size() >= cfg.maxShows) continue;
+            if (it.placeholder || merged.size() >= Math.min(cfg.maxShows, 4)) continue;
             if (seen.add(it.title.toLowerCase(Locale.ROOT))) merged.add(it);
         }
         row.items.clear();
