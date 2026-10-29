@@ -3,6 +3,7 @@ package com.mylauncher.akaitv;
 import android.accessibilityservice.AccessibilityService;
 import android.content.Intent;
 import android.util.Log;
+import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.accessibility.AccessibilityEvent;
 
@@ -25,8 +26,26 @@ public class KeyService extends AccessibilityService {
     @Override
     protected boolean onKeyEvent(KeyEvent event) {
         try {
-            if (event.getKeyCode() != KeyEvent.KEYCODE_SETTINGS) return false;
-            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+            int code = event.getKeyCode();
+            int scan = event.getScanCode();
+            String dev = "";
+            try {
+                InputDevice d = event.getDevice();
+                if (d != null && d.getName() != null) dev = d.getName();
+            } catch (Throwable ignored) {
+                // name is only for the log
+            }
+            boolean first = event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0;
+            if (first) {
+                Log.i("AkaiLauncher", "svc key " + KeyEvent.keyCodeToString(code)
+                        + " scan=" + scan + " dev=" + dev);
+            }
+            // The Settings key, or this remote's gear button, which the TV leaves unnamed
+            boolean hit = code == KeyEvent.KEYCODE_SETTINGS
+                    || (code == KeyEvent.KEYCODE_UNKNOWN && scan == 240
+                    && dev.contains("Consumer Control"));
+            if (!hit) return false;
+            if (first) {
                 Log.i("AkaiLauncher", "settings button caught");
                 Intent i = new Intent(this, MainActivity.class);
                 i.setAction(MainActivity.ACTION_SETTINGS_PANEL);
