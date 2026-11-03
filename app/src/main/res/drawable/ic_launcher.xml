@@ -1,13 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Mantel icon: a dark rounded square with three tiles on a shelf line; the third tile is amber. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
     <path
-        android:fillColor="#111111"
-        android:pathData="M0,0h108v108h-108z" />
+        android:fillColor="#15161C"
+        android:pathData="M22,0 H74 A22,22 0 0 1 96,22 V74 A22,22 0 0 1 74,96 H22 A22,22 0 0 1 0,74 V22 A22,22 0 0 1 22,0 Z" />
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,28 L80,52 L71,52 L71,80 L37,80 L37,52 L28,52 Z" />
+        android:fillColor="#262933"
+        android:pathData="M15,35 h18 a4.5,4.5 0 0 1 4.5,4.5 v9 a4.5,4.5 0 0 1 -4.5,4.5 h-18 a4.5,4.5 0 0 1 -4.5,-4.5 v-9 a4.5,4.5 0 0 1 4.5,-4.5 Z" />
+    <path
+        android:fillColor="#262933"
+        android:pathData="M39,35 h18 a4.5,4.5 0 0 1 4.5,4.5 v9 a4.5,4.5 0 0 1 -4.5,4.5 h-18 a4.5,4.5 0 0 1 -4.5,-4.5 v-9 a4.5,4.5 0 0 1 4.5,-4.5 Z" />
+    <path
+        android:fillColor="#F2B35B"
+        android:pathData="M63,35 h18 a4.5,4.5 0 0 1 4.5,4.5 v9 a4.5,4.5 0 0 1 -4.5,4.5 h-18 a4.5,4.5 0 0 1 -4.5,-4.5 v-9 a4.5,4.5 0 0 1 4.5,-4.5 Z" />
+    <path
+        android:fillColor="#F4F1EA"
+        android:pathData="M12,62 h72 a3,3 0 0 1 3,3 a3,3 0 0 1 -3,3 h-72 a3,3 0 0 1 -3,-3 a3,3 0 0 1 3,-3 Z" />
 </vector>

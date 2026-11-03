@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TV banner (16:9): dark base, a shelf of eight tiles with one amber, and a rounded "Mantel" wordmark. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <path
+        android:fillColor="#0A0A0E"
+        android:pathData="M0,0 H320 V180 H0 Z" />
+
+    <!-- wordmark -->
+    <group android:translateX="11">
+        <path
+            android:strokeColor="#F4F1EA"
+            android:strokeWidth="5"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M70,82 L70,48 L86,70 L102,48 L102,82" />
+        <path
+            android:strokeColor="#F4F1EA"
+            android:strokeWidth="5"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M132,72 A10,10 0 1 0 112,72 A10,10 0 1 0 132,72 M132,62 L132,82" />
+        <path
+            android:strokeColor="#F4F1EA"
+            android:strokeWidth="5"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M148,82 L148,60 M148,68 C148,58 166,56 166,68 L166,82" />
+        <path
+            android:strokeColor="#F4F1EA"
+            android:strokeWidth="5"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M180,50 L180,76 Q180,82 187,82 M174,62 L187,62" />
+        <path
+            android:strokeColor="#F4F1EA"
+            android:strokeWidth="5"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M196,72 H218 C218,60 196,60 196,72 C196,84 212,86 218,79" />
+        <path
+            android:strokeColor="#F2B35B"
+            android:strokeWidth="5"
+            android:strokeLineCap="round"
+            android:pathData="M228,48 L228,82" />
+    </group>
+
+    <!-- shelf of eight tiles -->
+    <path
+        android:fillColor="#262933"
+        android:pathData="M48,112 h18 a5,5 0 0 1 5,5 v13 a5,5 0 0 1 -5,5 h-18 a5,5 0 0 1 -5,-5 v-13 a5,5 0 0 1 5,-5 Z" />
+    <path
+        android:fillColor="#262933"
+        android:pathData="M76,112 h18 a5,5 0 0 1 5,5 v13 a5,5 0 0 1 -5,5 h-18 a5,5 0 0 1 -5,-5 v-13 a5,5 0 0 1 5,-5 Z" />
+    <path
+        android:fillColor="#262933"
+        android:pathData="M104,112 h18 a5,5 0 0 1 5,5 v13 a5,5 0 0 1 -5,5 h-18 a5,5 0 0 1 -5,-5 v-13 a5,5 0 0 1 5,-5 Z" />
+    <path
+        android:fillColor="#F2B35B"
+        android:pathData="M132,112 h18 a5,5 0 0 1 5,5 v13 a5,5 0 0 1 -5,5 h-18 a5,5 0 0 1 -5,-5 v-13 a5,5 0 0 1 5,-5 Z" />
+    <path
+        android:fillColor="#262933"
+        android:pathData="M160,112 h18 a5,5 0 0 1 5,5 v13 a5,5 0 0 1 -5,5 h-18 a5,5 0 0 1 -5,-5 v-13 a5,5 0 0 1 5,-5 Z" />
+    <path
+        android:fillColor="#262933"
+        android:pathData="M188,112 h18 a5,5 0 0 1 5,5 v13 a5,5 0 0 1 -5,5 h-18 a5,5 0 0 1 -5,-5 v-13 a5,5 0 0 1 5,-5 Z" />
+    <path
+        android:fillColor="#262933"
+        android:pathData="M216,112 h18 a5,5 0 0 1 5,5 v13 a5,5 0 0 1 -5,5 h-18 a5,5 0 0 1 -5,-5 v-13 a5,5 0 0 1 5,-5 Z" />
+    <path
+        android:fillColor="#15161C"
+        android:pathData="M244,112 h18 a5,5 0 0 1 5,5 v13 a5,5 0 0 1 -5,5 h-18 a5,5 0 0 1 -5,-5 v-13 a5,5 0 0 1 5,-5 Z" />
+</vector>

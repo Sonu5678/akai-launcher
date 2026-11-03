@@ -1,15 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-feature android:name="android.software.leanback" android:required="false" />
-    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+    <!-- Watch Next (Resume line). Third-party launchers are usually not granted this;
+         the Resume line then stays absent, as the design specifies. -->
+    <uses-permission android:name="com.android.providers.tv.permission.READ_EPG_DATA" />
 
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
-    <!-- Only used to fetch poster pictures for "My Shows" from the URLs your streaming apps publish.
-         Set "watchNext": false in config.json and the launcher never touches the network. -->
-    <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Lets the launcher read the "continue watching" list. Android only grants it if the TV allows it. -->
-    <uses-permission android:name="android.permission.READ_TV_LISTINGS" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.software.leanback" android:required="false" />
 
     <queries>
         <intent>
@@ -20,44 +19,44 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
-        <provider android:authorities="android.media.tv" />
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
     </queries>
 
     <application
         android:allowBackup="false"
-        android:banner="@drawable/ic_launcher"
+        android:banner="@drawable/banner"
         android:icon="@drawable/ic_launcher"
-        android:label="Home"
-        android:theme="@style/AppTheme">
+        android:label="Mantel"
+        android:supportsRtl="false"
+        android:theme="@style/MantelTheme">
 
         <activity
             android:name=".MainActivity"
-            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|density|uiMode|locale|layoutDirection"
+            android:banner="@drawable/banner"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density|locale|layoutDirection|fontScale"
             android:exported="true"
+            android:icon="@drawable/ic_launcher"
+            android:label="Mantel"
             android:launchMode="singleTask"
-            android:resumeWhilePausing="true"
             android:screenOrientation="landscape"
-            android:stateNotNeeded="true">
+            android:stateNotNeeded="true"
+            android:windowSoftInputMode="stateHidden|adjustNothing">
+
+            <!-- Registers Mantel as a Home (launcher) app -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.HOME" />
                 <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+
+            <!-- Lets the blue shortcut key and the Apps list open Mantel by hand -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <!-- Optional: only does anything once you switch it on with scripts/enable-settings-key.sh -->
-        <service
-            android:name=".KeyService"
-            android:exported="true"
-            android:label="Akai remote Settings button"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/key_service" />
-        </service>
     </application>
 </manifest>
