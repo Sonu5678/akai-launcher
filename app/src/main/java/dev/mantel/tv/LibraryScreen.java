@@ -422,16 +422,10 @@ final class LibraryScreen extends Screen {
         float sc = focused ? scaleTw.cur : 1f;
         float cx = x + 72f + (focused ? nudgeX.cur : 0f);
         float cy = y + 72f + (focused ? nudgeY.cur : 0f);
-        Bitmap bm = IconCache.get(act, e, 144, 30f);
         c.save();
         c.translate(cx, cy);
         c.scale(sc, sc);
-        if (bm != null) {
-            Ui.R.set(-72f, -72f, 72f, 72f);
-            c.drawBitmap(bm, null, Ui.R, Ui.BP);
-        } else {
-            Ui.rr(c, -72f, -72f, 72f, 72f, 30f, Ui.SURFACE1);
-        }
+        TileArt.draw(c, act, e, 0f, 0f, 144f);
         c.restore();
         if (focused) {
             float half = 72f * sc;

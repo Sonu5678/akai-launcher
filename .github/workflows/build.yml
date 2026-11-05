@@ -19,6 +19,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Fetch display font (optional, falls back to Inter)
+        continue-on-error: true
+        run: |
+          mkdir -p app/src/main/assets/fonts
+          curl -fsSL -o app/src/main/assets/fonts/Display.ttf "https://raw.githubusercontent.com/google/fonts/main/ofl/bricolagegrotesque/BricolageGrotesque%5Bopsz%2Cwdth%2Cwght%5D.ttf" || rm -f app/src/main/assets/fonts/Display.ttf
       - name: Build
         run: bash tools/build.sh
       - uses: actions/upload-artifact@v4

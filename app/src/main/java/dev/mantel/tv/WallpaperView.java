@@ -42,6 +42,13 @@ final class WallpaperView extends View {
     /** Extra scale used by ambient drift (0 to 0.03). */
     float drift = 0f;
 
+    /** Living scenes (the default look) versus the chosen wallpaper image. */
+    boolean scenes = true;
+    private int sBrand = Brand.NONE, sHue = 0xFF38D0EA, pBrand = Brand.NONE, pHue = 0xFF38D0EA;
+    private boolean sceneSet = false;
+    private final Tween sFade = new Tween(1f);
+    private final Tween sceneDimTw = new Tween(0f);
+
     private final Context ctx;
     private final Rect src = new Rect();
     private final RectF dst = new RectF(0, 0, 1920, 1080);
@@ -51,6 +58,30 @@ final class WallpaperView extends View {
         ctx = c.getApplicationContext();
         setWillNotDraw(false);
         setFocusable(false);
+    }
+
+    /** Which app's scene shows behind everything. */
+    void setScene(AppEntry e) {
+        int b = Brand.of(e);
+        int h = Brand.hueFor(e);
+        if (sceneSet && b == sBrand && h == sHue) return;
+        if (sceneSet) {
+            pBrand = sBrand;
+            pHue = sHue;
+            sFade.set(0f);
+            sFade.go(1f, Ui.dur(700));
+        }
+        sBrand = b;
+        sHue = h;
+        sceneSet = true;
+        invalidate();
+    }
+
+    /** Extra darkness over the scene: 0 on Home, more on the screens above it. */
+    void setSceneDim(float v) {
+        if (Math.abs(sceneDimTw.to - v) < 0.001f && !sceneDimTw.active) return;
+        sceneDimTw.go(v, Ui.dur(300));
+        invalidate();
     }
 
     String currentId() {
@@ -196,6 +227,8 @@ final class WallpaperView extends View {
         float s = Math.min(w / 1920f, h / 1080f);
         long now = SystemClock.uptimeMillis();
         boolean anim = fade.tick(now);
+        if (sFade.tick(now)) anim = true;
+        if (sceneDimTw.tick(now)) anim = true;
         if (!fade.active && prev != null) releasePrev();
 
         c.drawColor(Ui.BASE);
@@ -207,13 +240,24 @@ final class WallpaperView extends View {
             c.scale(1f + drift, 1f + drift);
             c.translate(-960f, -540f);
         }
-        if (prev != null) drawLayer(c, prev, 255);
-        drawLayer(c, cur, Math.round(255 * fade.cur));
+        boolean live = false;
+        if (scenes) {
+            if (sFade.cur < 1f) Scenes.draw(c, 0f, 0f, 1920f, 1080f, pBrand, pHue, now, 1f);
+            Scenes.draw(c, 0f, 0f, 1920f, 1080f, sBrand, sHue, now, sFade.cur);
+            live = Scenes.moving();
+        } else {
+            if (prev != null) drawLayer(c, prev, 255);
+            drawLayer(c, cur, Math.round(255 * fade.cur));
+        }
         c.restore();
 
-        float total = 1f - (1f - dimLevel) * (1f - ambient);
+        float base = scenes ? 1f - (1f - dimLevel) * (1f - sceneDimTw.cur) : dimLevel;
+        float total = 1f - (1f - base) * (1f - ambient);
         if (total > 0.001f) c.drawColor(Color.argb(Math.round(255 * total), 0, 0, 0));
+        int tint = Ui.moodTint();
+        if (tint != 0) c.drawColor(tint);
         if (anim) postInvalidateOnAnimation();
+        else if (live) postInvalidateDelayed(33);
     }
 
     private void drawLayer(Canvas c, Layer l, int alpha) {

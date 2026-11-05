@@ -12,10 +12,11 @@ import android.graphics.RectF;
 final class Glyphs {
     private Glyphs() {}
 
-    static final int SEARCH = 0, SETTINGS = 1, WIFI_OFF = 2, WARNING = 3, CHECK = 4, GRID = 5, PLUS = 6;
+    static final int SEARCH = 0, SETTINGS = 1, WIFI_OFF = 2, WARNING = 3, CHECK = 4, GRID = 5, PLUS = 6,
+            DECK = 7, WIFI = 8, MOON = 9, WAVE = 10, SUN = 11, SPEAKER = 12, DISPLAY = 13;
 
     private static final Paint GP = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private static final Path[] PATHS = new Path[7];
+    private static final Path[] PATHS = new Path[14];
 
     static {
         GP.setStyle(Paint.Style.STROKE);
@@ -102,6 +103,66 @@ final class Glyphs {
         p.moveTo(0f, -0.3f);
         p.lineTo(0f, 0.3f);
         PATHS[PLUS] = p;
+
+        // deck: a toggle pill with a knob
+        p = new Path();
+        p.addRoundRect(new RectF(-0.42f, -0.22f, 0.42f, 0.22f), 0.22f, 0.22f, Path.Direction.CW);
+        p.addCircle(0.2f, 0f, 0.1f, Path.Direction.CW);
+        PATHS[DECK] = p;
+
+        // wifi: three arcs and a dot
+        p = new Path();
+        for (int i = 0; i < radii.length; i++) {
+            RectF o = new RectF(-radii[i], cy - radii[i], radii[i], cy + radii[i]);
+            p.addArc(o, 232f, 76f);
+        }
+        p.moveTo(0f, cy);
+        p.lineTo(0f, cy + 0.001f);
+        PATHS[WIFI] = p;
+
+        // moon: a crescent
+        p = new Path();
+        p.addArc(new RectF(-0.38f, -0.38f, 0.38f, 0.38f), 60f, 240f);
+        p.quadTo(-0.12f, 0f, 0.19f, 0.329f);
+        PATHS[MOON] = p;
+
+        // wave
+        p = new Path();
+        p.moveTo(-0.42f, 0f);
+        p.cubicTo(-0.30f, -0.38f, -0.14f, -0.38f, 0f, 0f);
+        p.cubicTo(0.14f, 0.38f, 0.30f, 0.38f, 0.42f, 0f);
+        PATHS[WAVE] = p;
+
+        // sun: a disc outline with eight rays
+        p = new Path();
+        p.addCircle(0f, 0f, 0.14f, Path.Direction.CW);
+        for (int i = 0; i < 8; i++) {
+            double a = Math.toRadians(i * 45.0);
+            p.moveTo((float) (Math.cos(a) * 0.25), (float) (Math.sin(a) * 0.25));
+            p.lineTo((float) (Math.cos(a) * 0.38), (float) (Math.sin(a) * 0.38));
+        }
+        PATHS[SUN] = p;
+
+        // speaker with one wave
+        p = new Path();
+        p.moveTo(-0.38f, -0.14f);
+        p.lineTo(-0.20f, -0.14f);
+        p.lineTo(0.02f, -0.34f);
+        p.lineTo(0.02f, 0.34f);
+        p.lineTo(-0.20f, 0.14f);
+        p.lineTo(-0.38f, 0.14f);
+        p.close();
+        p.addArc(new RectF(-0.12f, -0.22f, 0.32f, 0.22f), -50f, 100f);
+        PATHS[SPEAKER] = p;
+
+        // display: a screen on a stand
+        p = new Path();
+        p.addRoundRect(new RectF(-0.42f, -0.32f, 0.42f, 0.18f), 0.06f, 0.06f, Path.Direction.CW);
+        p.moveTo(-0.18f, 0.38f);
+        p.lineTo(0.18f, 0.38f);
+        p.moveTo(0f, 0.18f);
+        p.lineTo(0f, 0.38f);
+        PATHS[DISPLAY] = p;
     }
 
     /** Draw glyph {@code id} centred at (cx, cy) with the given size (design px) and stroke (design px). */

@@ -82,6 +82,7 @@ public class MainActivity extends Activity {
         root.addView(wall, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         wall.setDim(Prefs.dim());
+        wall.scenes = Prefs.scenes();
         wall.show(Prefs.wallpaper(), false);
 
         home = new HomeScreen(this);
@@ -230,8 +231,18 @@ public class MainActivity extends Activity {
         root.addView(s, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         stack.add(s);
+        updateSceneDim();
         s.onEnter();
         s.animateIn();
+    }
+
+    /** Scenes stay bright on Home and darken behind every screen opened above it. */
+    void updateSceneDim() {
+        if (wall != null) wall.setSceneDim(top() == home ? 0f : 0.5f);
+    }
+
+    void openDeck() {
+        push(new DeckScreen(this));
     }
 
     void pop(final Screen s) {
@@ -241,6 +252,7 @@ public class MainActivity extends Activity {
             @Override public void run() {
                 root.removeView(s);
                 stack.remove(s);
+                updateSceneDim();
                 Screen t = top();
                 if (t != null) t.onReveal();
             }
@@ -255,6 +267,7 @@ public class MainActivity extends Activity {
             root.removeView(s);
             stack.remove(i);
         }
+        updateSceneDim();
     }
 
     void invalidateAll() {
@@ -458,6 +471,7 @@ public class MainActivity extends Activity {
     void applyLook() {
         Ui.accent = Ui.ACCENTS[Math.max(0, Math.min(3, Prefs.accent()))];
         wall.setDim(Prefs.dim());
+        wall.scenes = Prefs.scenes();
         wall.show(Prefs.wallpaper(), true);
         invalidateAll();
     }

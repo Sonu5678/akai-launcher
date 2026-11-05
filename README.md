@@ -1,4 +1,6 @@
-# Mantel — a one-shelf Home for the Akai AG43Q
+# Mantel 2 — a slab Home for the Akai AG43Q
+
+> **Mantel 2 redesign.** Home is now a row of slabs over living per-app scenes, with a glass dock (Search, Library, Deck, Settings), a Control Deck, an original icon pack and a mood palette. Written without a compiler: if the cloud build fails, send me the red lines. Sections below describe v1 and still apply to install and the way back. Not tested on the TV: scene frame rate (Settings, Deck, Scene motion: Calm or Still if it stutters), the optional Bricolage display font (fetched at build time; Inter is used if the download fails), and the 4 accent colours (the design shows 6).
 
 Mantel is a launcher for your 43" Google TV (Android 14), driven only by the remote:
 seven pinned apps and a Library tile on one shelf over a dark wallpaper, Search and Settings one
@@ -38,6 +40,20 @@ usually one line.
 ---
 
 ## 2. Get the APK (no PC)
+
+### Fastest: one command from Termux
+
+```
+pkg install git gh android-tools unzip
+gh auth login -s workflow
+cd ~ && unzip -o ~/storage/downloads/Mantel-project.zip && cd ~/mantel
+bash tools/deploy.sh 192.168.29.42:5555
+```
+
+It pushes Mantel to its own private GitHub repo, waits for the cloud build, downloads the APK,
+installs it on the TV and opens it. It does **not** make Mantel your Home app. Use a copy in
+your Termux home folder (as above), not shared storage, because git refuses to work there.
+Do not push Mantel into another project's repo: the builds would mix both projects' sources.
 
 ### Path A: build it free in the cloud with GitHub (recommended)
 

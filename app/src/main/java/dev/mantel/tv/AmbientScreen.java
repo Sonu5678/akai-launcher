@@ -84,7 +84,7 @@ final class AmbientScreen extends Screen {
         float dy = SHIFTS[step][1] - 12f;
 
         // 120 px clock centred on (960, 480); the baseline sits half a cap height below centre.
-        Ui.text(c, time, 960f + dx, 480f + 44f + dy, 120f, Ui.light, Ui.TEXT, Paint.Align.CENTER);
-        Ui.text(c, date, 960f + dx, 480f + 44f + 64f + dy, 32f, Ui.regular, Ui.TEXT2, Paint.Align.CENTER);
+        Ui.text(c, time, 960f + dx, 480f + 90f + dy, 280f, Ui.display, Ui.TEXT, Paint.Align.CENTER);
+        Ui.text(c, date, 960f + dx, 480f + 90f + 80f + dy, 36f, Ui.regular, Ui.TEXT2, Paint.Align.CENTER);
     }
 }

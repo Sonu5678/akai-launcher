@@ -121,6 +121,15 @@ final class Prefs {
 
     // ---- toggles and values ----
 
+    /** Scene motion: 0 Alive, 1 Calm, 2 Still. */
+    static int motion() { return sp.getInt("motion", 0); }
+    static void setMotion(int i) { sp.edit().putInt("motion", i).apply(); }
+    /** Mood palette: 0 Auto (follows the clock), 1 Dawn, 2 Day, 3 Dusk, 4 Night. */
+    static int mood() { return sp.getInt("mood", 0); }
+    static void setMood(int i) { sp.edit().putInt("mood", i).apply(); }
+    /** Living scenes on (default) or the chosen wallpaper image. */
+    static boolean scenes() { return sp.getBoolean("scenes", true); }
+    static void setScenes(boolean v) { sp.edit().putBoolean("scenes", v).apply(); }
     static boolean showResume() { return sp.getBoolean("showResume", true); }
     static void setShowResume(boolean v) { sp.edit().putBoolean("showResume", v).apply(); }
     static boolean showSystem() { return sp.getBoolean("showSystem", false); }

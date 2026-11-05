@@ -20,17 +20,17 @@ final class Ui {
     static final int W = 1920, H = 1080;
 
     // Colour tokens
-    static final int BASE = 0xFF0A0A0E;
-    static final int SURFACE1 = 0xFF15161C;
-    static final int SURFACE2 = 0xFF262933;
+    static final int BASE = 0xFF07080C;
+    static final int SURFACE1 = 0xFF13151C;
+    static final int SURFACE2 = 0xFF242733;
     static final int SHEET = 0xEB101116;          // #101116 at 92%
     static final int TEXT = 0xFFF4F1EA;
-    static final int TEXT2 = 0xFFA9A6A0;
-    static final int TEXT_OFF = 0xFF6F6D69;
+    static final int TEXT2 = 0xFFBDBAB4;
+    static final int TEXT_OFF = 0xFF7C7A76;
     static final int ERROR = 0xFFFF6B5E;
     static final int SUCCESS = 0xFF6BD29A;
-    static final int[] ACCENTS = {0xFFF2B35B, 0xFF8FB8FF, 0xFF8BD3A8, 0xFFFF8FA3};
-    static final String[] ACCENT_NAMES = {"Amber", "Ice", "Sage", "Rose"};
+    static final int[] ACCENTS = {0xFFFF8A4C, 0xFF38D0EA, 0xFF7C7CFF, 0xFF2EE59D};
+    static final String[] ACCENT_NAMES = {"Ember", "Cyan", "Indigo", "Emerald"};
     static final float[] DIM = {0f, 0.25f, 0.40f, 0.55f};
     static final String[] DIM_NAMES = {"Off", "25%", "40%", "55%"};
 
@@ -43,6 +43,8 @@ final class Ui {
     static Typeface light = Typeface.DEFAULT;
     static Typeface regular = Typeface.DEFAULT;
     static Typeface medium = Typeface.DEFAULT;
+    /** Display face for names and the clock. Falls back to Inter Medium if the font is not bundled. */
+    static Typeface display = Typeface.DEFAULT;
 
     static final Handler MAIN = new Handler(Looper.getMainLooper());
     static final ExecutorService IO = Executors.newSingleThreadExecutor();
@@ -58,10 +60,22 @@ final class Ui {
             light = Typeface.createFromAsset(c.getAssets(), "fonts/Inter-Light.otf");
             regular = Typeface.createFromAsset(c.getAssets(), "fonts/Inter-Regular.otf");
             medium = Typeface.createFromAsset(c.getAssets(), "fonts/Inter-Medium.otf");
+            display = medium;
         } catch (Throwable t) {
             light = Typeface.create("sans-serif-light", Typeface.NORMAL);
             regular = Typeface.create("sans-serif", Typeface.NORMAL);
             medium = Typeface.create("sans-serif-medium", Typeface.NORMAL);
+            display = medium;
+        }
+        try {
+            // Optional variable display font (Bricolage Grotesque), fetched by the cloud build.
+            java.io.InputStream in = c.getAssets().open("fonts/Display.ttf");
+            in.close();
+            display = new Typeface.Builder(c.getAssets(), "fonts/Display.ttf")
+                    .setFontVariationSettings("'wght' 700, 'opsz' 48").build();
+            if (display == null) display = medium;
+        } catch (Throwable t) {
+            display = medium;
         }
         refresh(c);
     }
@@ -87,6 +101,28 @@ final class Ui {
     /** Duration helper: every duration drops to 0 when the system animation scale is 0. */
     static long dur(long ms) {
         return animOff ? 0L : ms;
+    }
+
+    static final String[] MOOD_NAMES = {"Auto", "Dawn", "Day", "Dusk", "Night"};
+    static final int[] MOOD_TINT = {0, 0x1AFFAA78, 0x08FFFFFF, 0x1AFF6E3C, 0x33141E6E};
+
+    /** Which of Dawn, Day, Dusk or Night is showing now (1 to 4). */
+    static int moodNow() {
+        int m = Prefs.mood();
+        if (m > 0) return m;
+        int hr = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY);
+        if (hr >= 5 && hr < 9) return 1;
+        if (hr >= 9 && hr < 17) return 2;
+        if (hr >= 17 && hr < 22) return 3;
+        return 4;
+    }
+
+    static int moodTint() {
+        return MOOD_TINT[moodNow()];
+    }
+
+    static String moodName() {
+        return MOOD_NAMES[moodNow()];
     }
 
     static int alpha(int color, float a) {
